@@ -1,8 +1,22 @@
-import { useState, useEffect, useContext } from "react";
+import { Fragment, useState, useEffect, useContext } from "react";
 import { Plus, Edit, Trash2, Save, X, Truck, Zap } from "lucide-react";
 import { AdminContext } from "../context/AdminContext"; // Adjust path as needed
 import { toast } from "react-toastify";
 import axios from "axios";
+
+const currentYear = new Date().getFullYear();
+const firstRateYear = 2025;
+const rateYears = Array.from(
+  { length: currentYear - firstRateYear + 1 },
+  (_, index) => firstRateYear + index
+);
+const isValidRateYear = (value) => {
+  if (value === "") return false;
+  const year = Number(value);
+  return (
+    Number.isInteger(year) && year >= firstRateYear && year <= currentYear
+  );
+};
 
 const DonationCategory = () => {
   const { aToken, backendUrl, formatIndianCommas, capitalizeEachWord } =
@@ -19,10 +33,14 @@ const DonationCategory = () => {
   const [submitting, setSubmitting] = useState(false);
   const [courierSubmitting, setCourierSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState("categories");
+  const [selectedRateYear, setSelectedRateYear] = useState(currentYear);
+  const [selectedCourierYear, setSelectedCourierYear] = useState(currentYear);
 
   const [formData, setFormData] = useState({
     categoryName: "",
     rate: "",
+    rateYear: currentYear,
+    yearlyRates: [],
     weight: "",
     packet: false,
     description: "",
@@ -35,6 +53,8 @@ const DonationCategory = () => {
   const [courierFormData, setCourierFormData] = useState({
     region: "",
     amount: "",
+    amountYear: currentYear,
+    yearlyAmounts: [],
   });
 
   const regionOptions = [
@@ -45,17 +65,23 @@ const DonationCategory = () => {
   ];
 
   useEffect(() => {
-    if (aToken) {
+    if (aToken && isValidRateYear(selectedRateYear)) {
       fetchCategories();
+    }
+  }, [aToken, selectedRateYear]);
+
+  useEffect(() => {
+    if (aToken && isValidRateYear(selectedCourierYear)) {
       fetchCourierCharges();
     }
-  }, [aToken]);
+  }, [aToken, selectedCourierYear]);
 
   const fetchCategories = async () => {
     try {
       setLoading(true);
       const { data } = await axios.get(backendUrl + "/api/admin/categories", {
         headers: { aToken },
+        params: { year: selectedRateYear, includeUnconfigured: true },
       });
 
       if (data.success) {
@@ -83,6 +109,7 @@ const DonationCategory = () => {
         backendUrl + "/api/admin/courier-charges",
         {
           headers: { aToken },
+          params: { year: selectedCourierYear, includeUnconfigured: true },
         }
       );
 
@@ -113,16 +140,44 @@ const DonationCategory = () => {
         ...prev,
         dynamic: { ...prev.dynamic, minvalue: value },
       }));
+    } else if (name === "rateYear") {
+      const year = Number(value);
+      const configuredRate = formData.yearlyRates.find(
+        (item) => item.year === year
+      );
+      setFormData((prev) => ({
+        ...prev,
+        rateYear: value,
+        rate: configuredRate ? configuredRate.rate.toString() : "",
+      }));
     } else {
       setFormData((prev) => ({
         ...prev,
-        [name]: type === "checkbox" ? checked : capitalizeEachWord(value),
+        [name]:
+          type === "checkbox"
+            ? checked
+            : type === "number"
+            ? value
+            : capitalizeEachWord(value),
       }));
     }
   };
 
   const handleCourierInputChange = (e) => {
     const { name, value } = e.target;
+    if (name === "amountYear") {
+      const year = Number(value);
+      const configuredAmount = courierFormData.yearlyAmounts.find(
+        (item) => item.year === year
+      );
+      setCourierFormData((prev) => ({
+        ...prev,
+        amountYear: value,
+        amount: configuredAmount ? configuredAmount.amount.toString() : "",
+      }));
+      return;
+    }
+
     setCourierFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -130,8 +185,13 @@ const DonationCategory = () => {
   };
 
   const handleSubmit = async () => {
-    if (!formData.categoryName || !formData.rate || !formData.weight) {
-      toast.error("Category name, rate, and weight are required");
+    if (
+      !formData.categoryName ||
+      formData.rate === "" ||
+      !formData.rateYear ||
+      (formData.weight === "" && !formData.packet)
+    ) {
+      toast.error("Category name, rate year, rate, and weight/packet are required");
       return;
     }
     if (
@@ -147,6 +207,7 @@ const DonationCategory = () => {
       const requestData = {
         categoryName: formData.categoryName.trim(),
         rate: Number(formData.rate),
+        rateYear: Number(formData.rateYear),
         weight: Number(formData.weight),
         packet: formData.packet,
         description: formData.description.trim(),
@@ -187,8 +248,12 @@ const DonationCategory = () => {
   };
 
   const handleCourierSubmit = async () => {
-    if (!courierFormData.region || !courierFormData.amount) {
-      toast.error("Region and amount are required");
+    if (
+      !courierFormData.region ||
+      courierFormData.amount === "" ||
+      !courierFormData.amountYear
+    ) {
+      toast.error("Region, amount year, and amount are required");
       return;
     }
 
@@ -197,6 +262,7 @@ const DonationCategory = () => {
       const requestData = {
         region: courierFormData.region,
         amount: Number(courierFormData.amount),
+        amountYear: Number(courierFormData.amountYear),
       };
 
       let response;
@@ -237,6 +303,8 @@ const DonationCategory = () => {
     setFormData({
       categoryName: "",
       rate: "",
+      rateYear: selectedRateYear,
+      yearlyRates: [],
       weight: "",
       packet: false,
       description: "",
@@ -253,14 +321,24 @@ const DonationCategory = () => {
     setCourierFormData({
       region: "",
       amount: "",
+      amountYear: selectedCourierYear,
+      yearlyAmounts: [],
     });
     setShowCourierModal(true);
   };
 
   const handleEdit = (category) => {
+    const yearlyRates = category.yearlyRates || [];
+    const rateYear = Number(selectedRateYear);
+    const selectedYearRate = yearlyRates.find(
+      (item) => item.year === rateYear
+    );
+
     setFormData({
       categoryName: category.categoryName,
-      rate: category.rate.toString(),
+      rate: selectedYearRate?.rate?.toString() || "",
+      rateYear,
+      yearlyRates,
       weight: category.weight.toString(),
       packet: category.packet,
       description: category.description || "",
@@ -274,20 +352,36 @@ const DonationCategory = () => {
   };
 
   const handleEditCourierCharge = (courierCharge) => {
+    const yearlyAmounts = courierCharge.yearlyAmounts || [];
+    const amountYear = Number(selectedCourierYear);
+    const selectedYearAmount = yearlyAmounts.find(
+      (item) => item.year === amountYear
+    );
+
     setCourierFormData({
       region: courierCharge.region,
-      amount: courierCharge.amount.toString(),
+      amount: selectedYearAmount?.amount?.toString() || "",
+      amountYear,
+      yearlyAmounts,
     });
     setEditingCourierId(courierCharge._id);
     setShowCourierModal(true);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm("Are you sure you want to delete this category?")) {
+  const handleDelete = async (category) => {
+    const action = category.hasRateForRequestedYear
+      ? `Delete the configured ${selectedRateYear} rate and mark this category as not applicable for that year?`
+      : `This category is using an earlier year's rate. Mark it as not applicable for ${selectedRateYear}?`;
+    if (
+      window.confirm(action)
+    ) {
       try {
         const { data } = await axios.delete(
-          backendUrl + `/api/admin/categories/${id}`,
-          { headers: { aToken } }
+          backendUrl + `/api/admin/categories/${category._id}`,
+          {
+            headers: { aToken },
+            params: { year: selectedRateYear },
+          }
         );
 
         if (data.success) {
@@ -306,14 +400,20 @@ const DonationCategory = () => {
     }
   };
 
-  const handleDeleteCourierCharge = async (id) => {
+  const handleDeleteCourierCharge = async (charge) => {
+    const action = charge.hasAmountForRequestedYear
+      ? `Delete the configured ${selectedCourierYear} charge and mark this region as not applicable for that year?`
+      : `This region is using an earlier year's charge. Mark it as not applicable for ${selectedCourierYear}?`;
     if (
-      window.confirm("Are you sure you want to delete this courier charge?")
+      window.confirm(action)
     ) {
       try {
         const { data } = await axios.delete(
-          backendUrl + `/api/admin/courier-charges/${id}`,
-          { headers: { aToken } }
+          backendUrl + `/api/admin/courier-charges/${charge._id}`,
+          {
+            headers: { aToken },
+            params: { year: selectedCourierYear },
+          }
         );
 
         if (data.success) {
@@ -336,6 +436,8 @@ const DonationCategory = () => {
     setFormData({
       categoryName: "",
       rate: "",
+      rateYear: selectedRateYear,
+      yearlyRates: [],
       weight: "",
       packet: false,
       description: "",
@@ -352,6 +454,8 @@ const DonationCategory = () => {
     setCourierFormData({
       region: "",
       amount: "",
+      amountYear: selectedCourierYear,
+      yearlyAmounts: [],
     });
     setEditingCourierId(null);
     setShowCourierModal(false);
@@ -361,6 +465,21 @@ const DonationCategory = () => {
     const region = regionOptions.find((r) => r.value === regionValue);
     return region ? region.label : regionValue;
   };
+
+  const isCategoryApplicable = (category) =>
+    !category.isDisabledForRequestedYear && category.rate !== null;
+
+  const isCourierApplicable = (charge) =>
+    !charge.isDisabledForRequestedYear && charge.amount !== null;
+
+  const orderedCourierCharges = [...courierCharges].sort(
+    (a, b) => Number(isCourierApplicable(b)) - Number(isCourierApplicable(a))
+  );
+  const applicableCourierCount = courierCharges.filter(
+    isCourierApplicable
+  ).length;
+  const notApplicableCourierCount =
+    courierCharges.length - applicableCourierCount;
 
   if (
     loading &&
@@ -380,7 +499,15 @@ const DonationCategory = () => {
   }
 
   // Helper component for rendering category tables
-  const CategoryTable = ({ title, categories, icon }) => (
+  const CategoryTable = ({ title, categories, icon }) => {
+    const orderedCategories = [...categories].sort(
+      (a, b) =>
+        Number(isCategoryApplicable(b)) - Number(isCategoryApplicable(a))
+    );
+    const applicableCount = categories.filter(isCategoryApplicable).length;
+    const notApplicableCount = categories.length - applicableCount;
+
+    return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-8">
       <div className="p-4 sm:p-6 border-b border-gray-100">
         <div className="flex items-center justify-between">
@@ -416,7 +543,7 @@ const DonationCategory = () => {
                     Category Name
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
-                    Base Rate
+                    Base Rate ({selectedRateYear})
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
                     Base Weight
@@ -433,21 +560,71 @@ const DonationCategory = () => {
                     Description
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {categories.map((category) => (
-                  <tr
-                    key={category._id}
-                    className="border-b border-gray-200 hover:bg-gray-50"
-                  >
+                {orderedCategories.map((category, index) => {
+                  const applicable = isCategoryApplicable(category);
+                  const previousCategory = orderedCategories[index - 1];
+                  const startsGroup =
+                    index === 0 ||
+                    applicable !== isCategoryApplicable(previousCategory);
+                  const groupCount = applicable
+                    ? applicableCount
+                    : notApplicableCount;
+
+                  return (
+                  <Fragment key={category._id}>
+                    {startsGroup && (
+                      <tr
+                        className={
+                          applicable
+                            ? "bg-green-50 border-y border-green-200"
+                            : "bg-red-50 border-y border-red-200"
+                        }
+                      >
+                        <td
+                          colSpan={title.includes("Dynamic") ? 8 : 7}
+                          className={`px-4 py-2 text-xs font-bold uppercase tracking-wide ${
+                            applicable ? "text-green-800" : "text-red-800"
+                          }`}
+                        >
+                          {applicable
+                            ? `Applicable for ${selectedRateYear} (${groupCount})`
+                            : `Not applicable for ${selectedRateYear} (${groupCount})`}
+                        </td>
+                      </tr>
+                    )}
+                    <tr
+                      className={`border-b border-gray-200 ${
+                        applicable
+                          ? "hover:bg-green-50/50"
+                          : "bg-red-50/30 hover:bg-red-50/60"
+                      }`}
+                    >
                     <td className="px-4 py-3 text-sm text-gray-900 font-medium">
                       {category.categoryName}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
-                      ₹ {formatIndianCommas(category.rate)}
+                      <div>
+                        {category.isDisabledForRequestedYear
+                          ? "Not applicable"
+                          : category.rate === null
+                          ? "Not configured"
+                          : `₹ ${formatIndianCommas(category.rate)}`}
+                      </div>
+                      {category.rateYear && (
+                        <div className="text-xs text-gray-500">
+                          {category.isRateFallback
+                            ? `Using ${category.rateYear} rate`
+                            : `Configured for ${category.rateYear}`}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {category.weight} g
@@ -471,6 +648,27 @@ const DonationCategory = () => {
                     <td className="px-4 py-3 text-sm text-gray-700 max-w-xs truncate">
                       {category.description || "N/A"}
                     </td>
+                    <td className="px-4 py-3 text-sm">
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          applicable
+                            ? category.isRateFallback
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-green-100 text-green-800"
+                            : category.isDisabledForRequestedYear
+                            ? "bg-red-100 text-red-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {applicable
+                          ? category.isRateFallback
+                            ? "Applicable · Inherited"
+                            : "Applicable"
+                          : category.isDisabledForRequestedYear
+                          ? "Not applicable"
+                          : "Needs configuration"}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       <div className="flex gap-2">
                         <button
@@ -482,24 +680,35 @@ const DonationCategory = () => {
                           <Edit size={16} />
                         </button>
                         <button
-                          onClick={() => handleDelete(category._id)}
-                          disabled={loading}
+                          onClick={() => handleDelete(category)}
+                          disabled={
+                            loading || category.isDisabledForRequestedYear
+                          }
                           className="p-2 bg-red-100 hover:bg-red-200 disabled:bg-red-50 text-red-700 rounded-lg transition-colors"
-                          title="Delete"
+                          title={
+                            category.isDisabledForRequestedYear
+                              ? `Already not applicable for ${selectedRateYear}`
+                              : category.hasRateForRequestedYear
+                              ? `Delete ${selectedRateYear} rate`
+                              : `Mark as not applicable for ${selectedRateYear}`
+                          }
                         >
                           <Trash2 size={16} />
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl mx-auto">
@@ -550,6 +759,31 @@ const DonationCategory = () => {
       {/* Categories Tab */}
       {activeTab === "categories" && (
         <div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6">
+            <label
+              htmlFor="selectedRateYear"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
+              View rates for year
+            </label>
+            <select
+              id="selectedRateYear"
+              value={selectedRateYear}
+              onChange={(event) => setSelectedRateYear(event.target.value)}
+              className="w-full sm:w-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+            >
+              {rateYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-2">
+              If a year has no rate, the most recent earlier rate is used.
+              Delete an inherited rate to mark the category as not applicable
+              for the selected year.
+            </p>
+          </div>
           <CategoryTable
             title="Standard Categories"
             categories={standardCategories}
@@ -567,19 +801,47 @@ const DonationCategory = () => {
       {activeTab === "courier" && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100">
           <div className="p-4 sm:p-6 border-b border-gray-100">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center gap-2">
                 <Truck className="w-5 h-5" />
                 Courier Charges ({courierCharges.length})
               </h2>
-              <button
-                onClick={handleAddCourierCharge}
-                disabled={courierLoading}
-                className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors duration-200 flex items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Add Courier Charge
-              </button>
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div>
+                  <label
+                    htmlFor="selectedCourierYear"
+                    className="block text-xs font-medium text-gray-600 mb-1"
+                  >
+                    View charges for year
+                  </label>
+                  <select
+                    id="selectedCourierYear"
+                    value={selectedCourierYear}
+                    onChange={(event) =>
+                      setSelectedCourierYear(event.target.value)
+                    }
+                    className="w-full sm:w-36 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  >
+                    {rateYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Delete an inherited charge to mark it as not applicable for
+                    this year.
+                  </p>
+                </div>
+                <button
+                  onClick={handleAddCourierCharge}
+                  disabled={courierLoading}
+                  className="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors duration-200 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Courier Charge
+                </button>
+              </div>
             </div>
           </div>
 
@@ -600,7 +862,10 @@ const DonationCategory = () => {
                         Region
                       </th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
-                        Amount
+                        Amount ({selectedCourierYear})
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
+                        Status
                       </th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
                         Actions
@@ -608,16 +873,84 @@ const DonationCategory = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {courierCharges.map((charge) => (
-                      <tr
-                        key={charge._id}
-                        className="border-b border-gray-200 hover:bg-gray-50"
-                      >
+                    {orderedCourierCharges.map((charge, index) => {
+                      const applicable = isCourierApplicable(charge);
+                      const previousCharge = orderedCourierCharges[index - 1];
+                      const startsGroup =
+                        index === 0 ||
+                        applicable !== isCourierApplicable(previousCharge);
+                      const groupCount = applicable
+                        ? applicableCourierCount
+                        : notApplicableCourierCount;
+
+                      return (
+                      <Fragment key={charge._id}>
+                        {startsGroup && (
+                          <tr
+                            className={
+                              applicable
+                                ? "bg-green-50 border-y border-green-200"
+                                : "bg-red-50 border-y border-red-200"
+                            }
+                          >
+                            <td
+                              colSpan={4}
+                              className={`px-4 py-2 text-xs font-bold uppercase tracking-wide ${
+                                applicable ? "text-green-800" : "text-red-800"
+                              }`}
+                            >
+                              {applicable
+                                ? `Applicable for ${selectedCourierYear} (${groupCount})`
+                                : `Not applicable for ${selectedCourierYear} (${groupCount})`}
+                            </td>
+                          </tr>
+                        )}
+                        <tr
+                          className={`border-b border-gray-200 ${
+                            applicable
+                              ? "hover:bg-green-50/50"
+                              : "bg-red-50/30 hover:bg-red-50/60"
+                          }`}
+                        >
                         <td className="px-4 py-3 text-sm text-gray-900 font-medium">
                           {getRegionLabel(charge.region)}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-700">
-                          ₹ {formatIndianCommas(charge.amount)}
+                          <div>
+                            {charge.isDisabledForRequestedYear
+                              ? "Not applicable"
+                              : charge.amount === null
+                              ? "Not configured"
+                              : `₹ ${formatIndianCommas(charge.amount)}`}
+                          </div>
+                          {charge.amountYear && (
+                            <div className="text-xs text-gray-500">
+                              {charge.isAmountFallback
+                                ? `Using ${charge.amountYear} charge`
+                                : `Configured for ${charge.amountYear}`}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <span
+                            className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              applicable
+                                ? charge.isAmountFallback
+                                  ? "bg-blue-100 text-blue-800"
+                                  : "bg-green-100 text-green-800"
+                                : charge.isDisabledForRequestedYear
+                                ? "bg-red-100 text-red-800"
+                                : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            {applicable
+                              ? charge.isAmountFallback
+                                ? "Applicable · Inherited"
+                                : "Applicable"
+                              : charge.isDisabledForRequestedYear
+                              ? "Not applicable"
+                              : "Needs configuration"}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-700">
                           <div className="flex gap-2">
@@ -631,18 +964,29 @@ const DonationCategory = () => {
                             </button>
                             <button
                               onClick={() =>
-                                handleDeleteCourierCharge(charge._id)
+                                handleDeleteCourierCharge(charge)
                               }
-                              disabled={courierLoading}
+                              disabled={
+                                courierLoading ||
+                                charge.isDisabledForRequestedYear
+                              }
                               className="p-2 bg-red-100 hover:bg-red-200 disabled:bg-red-50 text-red-700 rounded-lg transition-colors"
-                              title="Delete"
+                              title={
+                                charge.isDisabledForRequestedYear
+                                  ? `Already not applicable for ${selectedCourierYear}`
+                                  : charge.hasAmountForRequestedYear
+                                  ? `Delete ${selectedCourierYear} charge`
+                                  : `Mark as not applicable for ${selectedCourierYear}`
+                              }
                             >
                               <Trash2 size={16} />
                             </button>
                           </div>
                         </td>
-                      </tr>
-                    ))}
+                        </tr>
+                      </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -713,7 +1057,26 @@ const DonationCategory = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Rate Year *
+                  </label>
+                  <select
+                    name="rateYear"
+                    value={formData.rateYear}
+                    onChange={handleInputChange}
+                    required
+                    disabled={submitting}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
+                  >
+                    {rateYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     {formData.dynamic.isDynamic
@@ -732,6 +1095,11 @@ const DonationCategory = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
                     placeholder="Enter rate"
                   />
+                  {editingId && formData.rate === "" && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      No rate is configured for this year. Enter one to add it.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -883,22 +1251,50 @@ const DonationCategory = () => {
                 </select>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Charge Year *
+                  </label>
+                  <select
+                    name="amountYear"
+                    value={courierFormData.amountYear}
+                    onChange={handleCourierInputChange}
+                    required
+                    disabled={courierSubmitting}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
+                  >
+                    {rateYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Amount (₹) *
+                  </label>
+                  <input
+                    type="number"
+                    name="amount"
+                    value={courierFormData.amount}
+                    onChange={handleCourierInputChange}
+                    min="0"
+                    step="0.01"
+                    required
+                    disabled={courierSubmitting}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
+                    placeholder="Enter courier charge amount"
+                  />
+                  {editingCourierId && courierFormData.amount === "" && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      No charge is configured for this year. Enter one to add it.
+                    </p>
+                  )}
+                </div>
+              </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Amount (₹) *
-                </label>
-                <input
-                  type="number"
-                  name="amount"
-                  value={courierFormData.amount}
-                  onChange={handleCourierInputChange}
-                  min="0"
-                  step="0.01"
-                  required
-                  disabled={courierSubmitting}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
-                  placeholder="Enter courier charge amount"
-                />
                 <p className="mt-2 text-sm text-gray-500">
                   If there are no charges for a specific region, you do not need
                   to add an entry for it.
