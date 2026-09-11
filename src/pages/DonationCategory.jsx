@@ -57,6 +57,7 @@ const DonationCategory = () => {
     prasadType: "grams",
     packetsPerUnit: 0,
     allowGramAlternativeForInPerson: false,
+    applicableToChildDonation: false,
     dynamic: {
       isDynamic: false,
       minvalue: 0,
@@ -276,6 +277,7 @@ const DonationCategory = () => {
         allowGramAlternativeForInPerson:
           formData.prasadType === "packet" &&
           formData.allowGramAlternativeForInPerson,
+        applicableToChildDonation: formData.applicableToChildDonation,
         configurationVersion: "category-v2",
       };
 
@@ -420,6 +422,7 @@ const DonationCategory = () => {
       prasadType: "grams",
       packetsPerUnit: 0,
       allowGramAlternativeForInPerson: false,
+      applicableToChildDonation: false,
       dynamic: {
         isDynamic: false,
         minvalue: 0,
@@ -479,6 +482,9 @@ const DonationCategory = () => {
         category.prasadType === "packet" &&
         (category.allowGramAlternativeForInPerson ||
           category.categoryName.toLowerCase().includes("professional")),
+      applicableToChildDonation: Boolean(
+        category.applicableToChildDonation
+      ),
       dynamic: {
         isDynamic: category.dynamic?.isDynamic || false,
         minvalue: category.dynamic?.minvalue || 0,
@@ -583,6 +589,7 @@ const DonationCategory = () => {
       prasadType: "grams",
       packetsPerUnit: 0,
       allowGramAlternativeForInPerson: false,
+      applicableToChildDonation: false,
       dynamic: {
         isDynamic: false,
         minvalue: 0,
@@ -694,6 +701,9 @@ const DonationCategory = () => {
                     Prasad Entitlement
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
+                    Child Donation
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
                     Description
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
@@ -726,7 +736,7 @@ const DonationCategory = () => {
                         }
                       >
                         <td
-                          colSpan={7}
+                          colSpan={8}
                           className={`px-4 py-2 text-xs font-bold uppercase tracking-wide ${
                             applicable ? "text-green-800" : "text-red-800"
                           }`}
@@ -789,6 +799,9 @@ const DonationCategory = () => {
                           : category.weight > 0
                             ? "Legacy grams"
                             : "Legacy none"}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-700">
+                      {category.applicableToChildDonation ? "Yes" : "No"}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700 max-w-xs truncate">
                       {category.description || "N/A"}
@@ -1453,6 +1466,26 @@ const DonationCategory = () => {
                   placeholder="Enter description (optional)"
                 />
               </div>
+
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  name="applicableToChildDonation"
+                  checked={formData.applicableToChildDonation}
+                  onChange={handleInputChange}
+                  disabled={submitting}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block font-medium">
+                    Applicable to child donation
+                  </span>
+                  <span className="block text-xs text-gray-500">
+                    Enable this category in the donation form when a user is
+                    donating for a child.
+                  </span>
+                </span>
+              </label>
 
               <div className="flex flex-col sm:flex-row gap-3 pt-4">
                 <button
