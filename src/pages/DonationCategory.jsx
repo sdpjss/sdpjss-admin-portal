@@ -35,6 +35,14 @@ const DonationCategory = () => {
   const [activeTab, setActiveTab] = useState("categories");
   const [selectedRateYear, setSelectedRateYear] = useState(currentYear);
   const [selectedCourierYear, setSelectedCourierYear] = useState(currentYear);
+  const [prasadRate, setPrasadRate] = useState({
+    year: currentYear,
+    rupeesPer100Grams: "",
+    minimumPrasadGrams: 0,
+    minimumCourierDonationAmount: 1210,
+    roundingUnitGrams: 1,
+  });
+  const [prasadRateSaving, setPrasadRateSaving] = useState(false);
 
   const [formData, setFormData] = useState({
     categoryName: "",
@@ -44,6 +52,11 @@ const DonationCategory = () => {
     weight: "",
     packet: false,
     description: "",
+    amountType: "fixed",
+    minimumAmountPerUnit: false,
+    prasadType: "grams",
+    packetsPerUnit: 0,
+    allowGramAlternativeForInPerson: false,
     dynamic: {
       isDynamic: false,
       minvalue: 0,
@@ -76,6 +89,36 @@ const DonationCategory = () => {
     }
   }, [aToken, selectedCourierYear]);
 
+  useEffect(() => {
+    if (!aToken) return;
+    axios
+      .get(backendUrl + "/api/admin/prasad-rate", {
+        headers: { aToken },
+        params: { year: prasadRate.year },
+      })
+      .then(({ data }) => {
+        if (data.success && data.rate) {
+          setPrasadRate({
+            year: prasadRate.year,
+            rupeesPer100Grams: data.rate.rupeesPer100Grams,
+            minimumPrasadGrams: data.rate.minimumPrasadGrams || 0,
+            minimumCourierDonationAmount:
+              data.rate.minimumCourierDonationAmount ?? 1210,
+            roundingUnitGrams: data.rate.roundingUnitGrams,
+          });
+        } else if (data.success) {
+          setPrasadRate((current) => ({
+            year: current.year,
+            rupeesPer100Grams: "",
+            minimumPrasadGrams: 0,
+            minimumCourierDonationAmount: 1210,
+            roundingUnitGrams: 1,
+          }));
+        }
+      })
+      .catch((error) => console.error("Error fetching Prasad rate:", error));
+  }, [aToken, backendUrl, prasadRate.year]);
+
   const fetchCategories = async () => {
     try {
       setLoading(true);
@@ -85,10 +128,18 @@ const DonationCategory = () => {
       });
 
       if (data.success) {
+        const amountTypeFor = (category) =>
+          category.configurationVersion === "category-v2"
+            ? category.amountType
+            : category.dynamic?.isDynamic
+              ? "minimum"
+              : "fixed";
         const standard = data.categories.filter(
-          (cat) => !cat.dynamic?.isDynamic
+          (category) => amountTypeFor(category) === "fixed"
         );
-        const dynamic = data.categories.filter((cat) => cat.dynamic?.isDynamic);
+        const dynamic = data.categories.filter(
+          (category) => amountTypeFor(category) === "minimum"
+        );
         setStandardCategories(standard);
         setDynamicCategories(dynamic);
       } else {
@@ -150,6 +201,8 @@ const DonationCategory = () => {
         rateYear: value,
         rate: configuredRate ? configuredRate.rate.toString() : "",
       }));
+    } else if (["amountType", "prasadType"].includes(name)) {
+      setFormData((prev) => ({ ...prev, [name]: value }));
     } else {
       setFormData((prev) => ({
         ...prev,
@@ -189,16 +242,19 @@ const DonationCategory = () => {
       !formData.categoryName ||
       formData.rate === "" ||
       !formData.rateYear ||
-      (formData.weight === "" && !formData.packet)
+      !formData.amountType ||
+      !formData.prasadType
     ) {
-      toast.error("Category name, rate year, rate, and weight/packet are required");
+      toast.error(
+        "Category name, rate year, amount, amount type, and Prasad type are required"
+      );
       return;
     }
     if (
-      formData.dynamic.isDynamic &&
-      (!formData.dynamic.minvalue || formData.dynamic.minvalue < 0)
+      formData.prasadType === "packet" &&
+      Number(formData.packetsPerUnit) < 1
     ) {
-      toast.error("A valid minimum value is required for dynamic categories.");
+      toast.error("Packets per unit must be at least 1.");
       return;
     }
 
@@ -211,7 +267,16 @@ const DonationCategory = () => {
         weight: Number(formData.weight),
         packet: formData.packet,
         description: formData.description.trim(),
-        dynamic: formData.dynamic,
+        amountType: formData.amountType,
+        minimumAmountPerUnit:
+          formData.amountType === "minimum" &&
+          formData.minimumAmountPerUnit,
+        prasadType: formData.prasadType,
+        packetsPerUnit: Number(formData.packetsPerUnit) || 0,
+        allowGramAlternativeForInPerson:
+          formData.prasadType === "packet" &&
+          formData.allowGramAlternativeForInPerson,
+        configurationVersion: "category-v2",
       };
 
       let response;
@@ -230,6 +295,13 @@ const DonationCategory = () => {
       }
 
       if (response.data.success) {
+        if (
+          response.data.category?.configurationVersion !== "category-v2"
+        ) {
+          throw new Error(
+            "The API did not persist the new category rules. Restart or deploy the updated backend and try again."
+          );
+        }
         toast.success(response.data.message);
         resetForm();
         await fetchCategories();
@@ -240,6 +312,7 @@ const DonationCategory = () => {
       console.error("Error saving category:", error);
       toast.error(
         error.response?.data?.message ||
+          error.message ||
           "Error saving category. Please try again."
       );
     } finally {
@@ -298,6 +371,40 @@ const DonationCategory = () => {
     }
   };
 
+  const handlePrasadRateSubmit = async () => {
+    if (
+      Number(prasadRate.rupeesPer100Grams) <= 0 ||
+      Number(prasadRate.minimumPrasadGrams) < 0 ||
+      Number(prasadRate.minimumCourierDonationAmount) < 0 ||
+      Number(prasadRate.roundingUnitGrams) < 1
+    ) {
+      toast.error("Enter a positive Prasad rate and rounding unit.");
+      return;
+    }
+    try {
+      setPrasadRateSaving(true);
+      const { data } = await axios.put(
+        backendUrl + "/api/admin/prasad-rate",
+        {
+          year: Number(prasadRate.year),
+          rupeesPer100Grams: Number(prasadRate.rupeesPer100Grams),
+          minimumPrasadGrams: Number(prasadRate.minimumPrasadGrams),
+          minimumCourierDonationAmount: Number(
+            prasadRate.minimumCourierDonationAmount
+          ),
+          roundingUnitGrams: Number(prasadRate.roundingUnitGrams),
+        },
+        { headers: { aToken } }
+      );
+      if (!data.success) throw new Error(data.message);
+      toast.success(data.message);
+    } catch (error) {
+      toast.error(error.response?.data?.message || error.message);
+    } finally {
+      setPrasadRateSaving(false);
+    }
+  };
+
   const handleAddCategory = () => {
     setEditingId(null);
     setFormData({
@@ -308,6 +415,11 @@ const DonationCategory = () => {
       weight: "",
       packet: false,
       description: "",
+      amountType: "fixed",
+      minimumAmountPerUnit: false,
+      prasadType: "grams",
+      packetsPerUnit: 0,
+      allowGramAlternativeForInPerson: false,
       dynamic: {
         isDynamic: false,
         minvalue: 0,
@@ -342,6 +454,31 @@ const DonationCategory = () => {
       weight: category.weight.toString(),
       packet: category.packet,
       description: category.description || "",
+      amountType:
+        category.configurationVersion === "category-v2"
+          ? category.amountType
+          : category.dynamic?.isDynamic
+            ? "minimum"
+            : "fixed",
+      minimumAmountPerUnit: Boolean(category.minimumAmountPerUnit),
+      prasadType:
+        category.configurationVersion === "category-v2"
+          ? category.prasadType
+          : category.packet
+            ? "packet"
+            : category.weight > 0
+              ? "grams"
+              : "none",
+      packetsPerUnit:
+        category.configurationVersion === "category-v2"
+          ? category.packetsPerUnit || 0
+          : category.packet
+            ? 1
+            : 0,
+      allowGramAlternativeForInPerson:
+        category.prasadType === "packet" &&
+        (category.allowGramAlternativeForInPerson ||
+          category.categoryName.toLowerCase().includes("professional")),
       dynamic: {
         isDynamic: category.dynamic?.isDynamic || false,
         minvalue: category.dynamic?.minvalue || 0,
@@ -441,6 +578,11 @@ const DonationCategory = () => {
       weight: "",
       packet: false,
       description: "",
+      amountType: "fixed",
+      minimumAmountPerUnit: false,
+      prasadType: "grams",
+      packetsPerUnit: 0,
+      allowGramAlternativeForInPerson: false,
       dynamic: {
         isDynamic: false,
         minvalue: 0,
@@ -515,7 +657,7 @@ const DonationCategory = () => {
             {icon}
             {title} ({categories.length})
           </h2>
-          {title === "Standard Categories" && (
+          {title === "Fixed Amount Categories" && (
             <button
               onClick={handleAddCategory}
               disabled={loading}
@@ -543,18 +685,13 @@ const DonationCategory = () => {
                     Category Name
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
-                    Base Rate ({selectedRateYear})
+                    Donation Amount ({selectedRateYear})
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
-                    Base Weight
+                    Amount Type
                   </th>
-                  {title.includes("Dynamic") && (
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
-                      Min. Weight
-                    </th>
-                  )}
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
-                    Packet
+                    Prasad Entitlement
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
                     Description
@@ -589,7 +726,7 @@ const DonationCategory = () => {
                         }
                       >
                         <td
-                          colSpan={title.includes("Dynamic") ? 8 : 7}
+                          colSpan={7}
                           className={`px-4 py-2 text-xs font-bold uppercase tracking-wide ${
                             applicable ? "text-green-800" : "text-red-800"
                           }`}
@@ -627,23 +764,31 @@ const DonationCategory = () => {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
-                      {category.weight} g
+                      {category.configurationVersion === "category-v2"
+                        ? category.amountType === "minimum"
+                          ? category.minimumAmountPerUnit
+                            ? "Minimum per quantity"
+                            : "Minimum"
+                          : "Fixed"
+                        : "Legacy · confirm by editing"}
                     </td>
-                    {title.includes("Dynamic") && (
-                      <td className="px-4 py-3 text-sm text-gray-700">
-                        {category.dynamic.minvalue} g
-                      </td>
-                    )}
-                    <td className="px-4 py-3 text-sm text-gray-700">
-                      <span
-                        className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                          category.packet
-                            ? "bg-green-100 text-green-800"
-                            : "bg-gray-100 text-gray-800"
-                        }`}
-                      >
-                        {category.packet ? "Yes" : "No"}
-                      </span>
+                    <td className="px-4 py-3 text-sm text-gray-700 capitalize">
+                      {category.configurationVersion === "category-v2"
+                        ? category.prasadType === "packet"
+                          ? `${category.packetsPerUnit} packet(s) per unit${
+                              category.allowGramAlternativeForInPerson ||
+                              category.categoryName
+                                .toLowerCase()
+                                .includes("professional")
+                                ? " · grams available in person"
+                                : ""
+                            }`
+                          : category.prasadType
+                        : category.packet
+                          ? "Legacy packet"
+                          : category.weight > 0
+                            ? "Legacy grams"
+                            : "Legacy none"}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700 max-w-xs truncate">
                       {category.description || "N/A"}
@@ -742,6 +887,16 @@ const DonationCategory = () => {
               )
             </button>
             <button
+              onClick={() => setActiveTab("prasad")}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === "prasad"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              Prasad Rate
+            </button>
+            <button
               onClick={() => setActiveTab("courier")}
               className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
                 activeTab === "courier"
@@ -785,15 +940,138 @@ const DonationCategory = () => {
             </p>
           </div>
           <CategoryTable
-            title="Standard Categories"
+            title="Fixed Amount Categories"
             categories={standardCategories}
             icon={<Plus className="w-5 h-5" />}
           />
           <CategoryTable
-            title="Dynamic Categories"
+            title="Minimum Amount Categories"
             categories={dynamicCategories}
             icon={<Zap className="w-5 h-5 text-yellow-500" />}
           />
+        </div>
+      )}
+
+      {activeTab === "prasad" && (
+        <div className="max-w-2xl rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:p-6">
+          <h2 className="text-xl font-semibold text-gray-900">
+            Global Prasad Calculation Rate
+          </h2>
+          <p className="mt-2 text-sm text-gray-600">
+            This rate applies only to new donations made against categories
+            configured for Prasad in grams. Historical donations are unchanged.
+          </p>
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Year
+              </label>
+              <select
+                value={prasadRate.year}
+                onChange={(event) =>
+                  setPrasadRate((current) => ({
+                    ...current,
+                    year: Number(event.target.value),
+                  }))
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                {rateYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Price for 100 grams (₹)
+              </label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={prasadRate.rupeesPer100Grams}
+                onChange={(event) =>
+                  setPrasadRate((current) => ({
+                    ...current,
+                    rupeesPer100Grams: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Minimum Prasad quantity (g)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={prasadRate.minimumPrasadGrams}
+                onChange={(event) =>
+                  setPrasadRate((current) => ({
+                    ...current,
+                    minimumPrasadGrams: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Applied only when the calculated gram entitlement is positive
+                but below this value.
+              </p>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Minimum donation for courier (₹)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={prasadRate.minimumCourierDonationAmount}
+                onChange={(event) =>
+                  setPrasadRate((current) => ({
+                    ...current,
+                    minimumCourierDonationAmount: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                No-Prasad category amounts are excluded. Below this value,
+                only in-person collection is available.
+              </p>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Round down to grams
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={prasadRate.roundingUnitGrams}
+                onChange={(event) =>
+                  setPrasadRate((current) => ({
+                    ...current,
+                    roundingUnitGrams: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handlePrasadRateSubmit}
+            disabled={prasadRateSaving}
+            className="mt-6 rounded-lg bg-blue-500 px-4 py-2 font-medium text-white disabled:bg-blue-300"
+          >
+            {prasadRateSaving ? "Saving..." : "Save Prasad Rate"}
+          </button>
         </div>
       )}
 
@@ -1015,32 +1293,13 @@ const DonationCategory = () => {
             </div>
 
             <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-              {/* --- DYNAMIC CATEGORY TOGGLE --- */}
-              <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg">
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    name="isDynamic"
-                    id="isDynamic"
-                    checked={formData.dynamic.isDynamic}
-                    onChange={handleInputChange}
-                    disabled={submitting}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
-                  />
-                  <label
-                    htmlFor="isDynamic"
-                    className="ml-2 block text-sm font-medium text-yellow-800"
-                  >
-                    This is a Dynamic Category
-                  </label>
+              {editingId && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                  Saving confirms this category under the new calculation
+                  model. Existing donations and receipts remain unchanged.
                 </div>
-                <p className="text-xs text-yellow-700 mt-2">
-                  Enable this if users can donate a custom amount for this
-                  category. The weight will be calculated proportionally.
-                </p>
-              </div>
+              )}
 
-              {/* --- STANDARD INPUTS --- */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Category Name *
@@ -1057,7 +1316,22 @@ const DonationCategory = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Donation Amount Type *
+                  </label>
+                  <select
+                    name="amountType"
+                    value={formData.amountType}
+                    onChange={handleInputChange}
+                    disabled={submitting}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  >
+                    <option value="fixed">Fixed amount</option>
+                    <option value="minimum">Minimum amount</option>
+                  </select>
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Rate Year *
@@ -1079,9 +1353,9 @@ const DonationCategory = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {formData.dynamic.isDynamic
-                      ? "Base Rate (₹) *"
-                      : "Rate (₹) *"}
+                    {formData.amountType === "minimum"
+                      ? "Minimum Donation Amount (₹) *"
+                      : "Fixed Donation Amount (₹) *"}
                   </label>
                   <input
                     type="number"
@@ -1101,63 +1375,68 @@ const DonationCategory = () => {
                     </p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {formData.dynamic.isDynamic
-                      ? "Base Weight (g) *"
-                      : "Weight (g) *"}
+                {formData.amountType === "minimum" && (
+                  <label className="flex items-start gap-2 self-end pb-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      name="minimumAmountPerUnit"
+                      checked={formData.minimumAmountPerUnit}
+                      onChange={handleInputChange}
+                      disabled={submitting}
+                      className="mt-1"
+                    />
+                    Show quantity and apply the minimum amount per quantity
                   </label>
-                  <input
-                    type="number"
-                    name="weight"
-                    value={formData.weight}
-                    onChange={handleInputChange}
-                    min="0"
-                    step="0.01"
-                    required
-                    disabled={submitting}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
-                    placeholder="Enter weight"
-                  />
-                </div>
+                )}
               </div>
 
-              {/* --- DYNAMIC-ONLY INPUT --- */}
-              {formData.dynamic.isDynamic && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Minimum Weight (g) *
+                    Prasad Entitlement *
                   </label>
-                  <input
-                    type="number"
-                    name="minvalue"
-                    value={formData.dynamic.minvalue}
+                  <select
+                    name="prasadType"
+                    value={formData.prasadType}
                     onChange={handleInputChange}
-                    min="0"
-                    required
                     disabled={submitting}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm sm:text-base disabled:bg-gray-50"
-                    placeholder="Min. weight for small donations"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Weight to be assigned if donation amount is less than the
-                    base rate.
-                  </p>
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  >
+                    <option value="grams">Quantity in grams</option>
+                    <option value="packet">Packets</option>
+                    <option value="none">No Prasad</option>
+                  </select>
                 </div>
-              )}
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  name="packet"
-                  checked={formData.packet}
-                  onChange={handleInputChange}
-                  disabled={submitting}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
-                />
-                <label className="ml-2 block text-sm text-gray-700">
-                  Packet Required
-                </label>
+                {formData.prasadType === "packet" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Packets per unit *
+                      </label>
+                      <input
+                        type="number"
+                        name="packetsPerUnit"
+                        value={formData.packetsPerUnit}
+                        onChange={handleInputChange}
+                        min="1"
+                        required
+                        disabled={submitting}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        name="allowGramAlternativeForInPerson"
+                        checked={formData.allowGramAlternativeForInPerson}
+                        onChange={handleInputChange}
+                        disabled={submitting}
+                        className="mt-1"
+                      />
+                      Also allow Halwa by weight for in-person collection
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div>

@@ -69,8 +69,16 @@ const DonationEditView = ({
 
     if (isDynamic) {
       const amount = Number(dynamicAmount) || 0;
-      if (amount <= 0) {
-        toast.warn("Please enter a valid amount.");
+      const minimumAmount =
+        selectedCategoryDetails.configurationVersion === "category-v2"
+          ? Number(selectedCategoryDetails.rate)
+          : 0;
+      if (amount <= 0 || amount < minimumAmount) {
+        toast.warn(
+          minimumAmount > 0
+            ? `Please enter at least ₹${minimumAmount}.`
+            : "Please enter a valid amount."
+        );
         return;
       }
       let weight = 0;
