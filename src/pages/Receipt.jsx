@@ -193,6 +193,11 @@ const ReceiptTemplate = ({
           >
             SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
           </div>
+          <div
+            style={{ color: "#15803d", fontSize: "12px", fontWeight: 600 }}
+          >
+            (Registered under Indian Trust Act - 1882)
+          </div>
           <div style={{ marginBottom: "1px", fontSize: "14px" }}>
             Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
             823003
@@ -1134,6 +1139,7 @@ const Receipt = () => {
   const [showAddUserForm, setShowAddUserForm] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [willCome, setWillCome] = useState("YES");
+  const [selectedPrasadType, setSelectedPrasadType] = useState("halwa");
   const [courierAddress, setCourierAddress] = useState("");
   const [donations, setDonations] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -1155,6 +1161,8 @@ const Receipt = () => {
   const [recaptchaToken, setRecaptchaToken] = useState(null);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [minPrasadWeight, setMinPrasadWeight] = useState(0);
+  const [minimumCourierDonationAmount, setMinimumCourierDonationAmount] =
+    useState(1210);
 
   // New state for the add user form with validation
   const [newUser, setNewUser] = useState({
@@ -1336,6 +1344,7 @@ const Receipt = () => {
         try {
           await getUserList();
           await fetchCategories();
+          await fetchPrasadRate();
           await fetchCourierCharges();
           const khandanData = await getFamilyList();
           if (khandanData && khandanData.success) {
@@ -1385,6 +1394,22 @@ const Receipt = () => {
       }
     } catch (error) {
       console.error("Error fetching categories:", error);
+    }
+  };
+
+  const fetchPrasadRate = async () => {
+    try {
+      const { data } = await axios.get(
+        backendUrl + "/api/admin/prasad-rate",
+        { headers: { aToken } }
+      );
+      if (data.success && data.rate) {
+        setMinimumCourierDonationAmount(
+          Number(data.rate.minimumCourierDonationAmount) || 0
+        );
+      }
+    } catch (error) {
+      console.error("Error fetching Prasad configuration:", error);
     }
   };
 
@@ -1515,8 +1540,26 @@ const Receipt = () => {
 
     if (isDynamic) {
       const amount = Number(dynamicAmount) || 0;
-      if (amount <= 0) {
-        toast.warn("Please enter a valid amount for the dynamic donation.");
+      const donationQuantity = category.minimumAmountPerUnit
+        ? parseInt(quantity, 10)
+        : 1;
+      if (
+        category.minimumAmountPerUnit &&
+        (!Number.isInteger(donationQuantity) || donationQuantity < 1)
+      ) {
+        toast.warn("Please enter a valid quantity.");
+        return;
+      }
+      const minimumAmount =
+        category.configurationVersion === "category-v2"
+          ? Number(category.rate) * donationQuantity
+          : 0;
+      if (amount <= 0 || amount < minimumAmount) {
+        toast.warn(
+          minimumAmount > 0
+            ? `Please enter at least ₹${minimumAmount}.`
+            : "Please enter a valid amount for the donation."
+        );
         return;
       }
       let weight = 0;
@@ -1529,10 +1572,24 @@ const Receipt = () => {
         id: Date.now(),
         categoryId: category._id,
         category: category.categoryName,
-        number: 1,
+        number: donationQuantity,
         amount: amount,
         isPacket: false,
         quantity: weight,
+        prasadType:
+          category.configurationVersion === "category-v2"
+            ? category.prasadType
+            : category.categoryCode === "maa_durga_pratima"
+              ? "none"
+              : category.packet
+                ? "packet"
+                : "grams",
+        allowGramAlternativeForInPerson:
+          category.configurationVersion === "category-v2" &&
+          category.prasadType === "packet" &&
+          (category.allowGramAlternativeForInPerson ||
+            category.categoryName.toLowerCase().includes("professional")),
+        configurationVersion: category.configurationVersion,
       };
     } else {
       if (!quantity || parseInt(quantity, 10) < 1) {
@@ -1549,6 +1606,20 @@ const Receipt = () => {
         amount: amount,
         isPacket: category.packet,
         quantity: weight,
+        prasadType:
+          category.configurationVersion === "category-v2"
+            ? category.prasadType
+            : category.categoryCode === "maa_durga_pratima"
+              ? "none"
+              : category.packet
+                ? "packet"
+                : "grams",
+        allowGramAlternativeForInPerson:
+          category.configurationVersion === "category-v2" &&
+          category.prasadType === "packet" &&
+          (category.allowGramAlternativeForInPerson ||
+            category.categoryName.toLowerCase().includes("professional")),
+        configurationVersion: category.configurationVersion,
       };
     }
 
@@ -1570,12 +1641,6 @@ const Receipt = () => {
     ["in_manpur", "in_gaya_outside_manpur"].includes(
       selectedUser.address.currlocation
     );
-
-  useEffect(() => {
-    if (isLocalUser) {
-      setWillCome("YES");
-    }
-  }, [isLocalUser, selectedUser]);
 
   useEffect(() => {
     if (selectedCategory) {
@@ -1600,6 +1665,44 @@ const Receipt = () => {
     (sum, donation) => sum + donation.amount,
     0
   );
+  const prasadEligibleDonationAmount = donations.reduce(
+    (sum, donation) =>
+      donation.prasadType === "none" ? sum : sum + donation.amount,
+    0
+  );
+  const isCourierDonationEligible =
+    prasadEligibleDonationAmount >= minimumCourierDonationAmount;
+
+  useEffect(() => {
+    if (isLocalUser || !isCourierDonationEligible) {
+      setWillCome("YES");
+    }
+  }, [isCourierDonationEligible, isLocalUser, selectedUser]);
+  const usesOnlyCategoryV2 =
+    donations.length > 0 &&
+    donations.every((item) => item.configurationVersion === "category-v2");
+  const hasGramCollectionOption = donations.some(
+    (item) =>
+      item.prasadType === "grams" ||
+      (item.prasadType === "packet" &&
+        item.allowGramAlternativeForInPerson)
+  );
+  const hasPacketCollectionOption = donations.some(
+    (item) => item.prasadType === "packet"
+  );
+
+  useEffect(() => {
+    if (!usesOnlyCategoryV2) return;
+    if (hasGramCollectionOption && !hasPacketCollectionOption) {
+      setSelectedPrasadType("halwa");
+    } else if (hasPacketCollectionOption && !hasGramCollectionOption) {
+      setSelectedPrasadType("packet");
+    }
+  }, [
+    hasGramCollectionOption,
+    hasPacketCollectionOption,
+    usesOnlyCategoryV2,
+  ]);
   const totalWeight = donations.reduce(
     (sum, donation) => sum + donation.quantity,
     0
@@ -1886,6 +1989,7 @@ const Receipt = () => {
     setUserSearch("");
     setDonations([]);
     setWillCome("YES");
+    setSelectedPrasadType("halwa");
     setCourierAddress("");
     if (donationType === "individual") setPaymentMethod("");
     setRemarks("");
@@ -1901,6 +2005,11 @@ const Receipt = () => {
     if (donations.length === 0)
       return toast.error("Please add at least one donation");
     if (!paymentMethod) return toast.error("Please select a payment method");
+    if (willCome === "NO" && !isCourierDonationEligible) {
+      return toast.error(
+        `Courier requires at least ₹${minimumCourierDonationAmount.toLocaleString("en-IN")} from Prasad-eligible categories. Please select in-person collection.`
+      );
+    }
     if (willCome === "NO" && !courierAddress.trim())
       return toast.error("Please provide a courier address");
 
@@ -1927,6 +2036,10 @@ const Receipt = () => {
           willCome === "NO"
             ? courierAddress
             : `${selectedUser.address.street}, ${selectedUser.address.city}, ${selectedUser.address.state} - ${selectedUser.address.pin}`,
+        mahaprasadFulfillment: {
+          mode: willCome === "NO" ? "courier" : "collection",
+          type: selectedPrasadType,
+        },
       };
 
       if (paymentMethod === "Cash") {
@@ -1971,6 +2084,8 @@ const Receipt = () => {
       netPayableAmount: netPayableAmount,
       orderPayload: {
         userId: selectedUser._id,
+        donatedFor: selectedUser._id,
+        donatedAs: "self",
         list: donations.map((d) => ({
           categoryId: d.categoryId,
           category: d.category,
@@ -1987,6 +2102,10 @@ const Receipt = () => {
           willCome === "NO"
             ? courierAddress
             : `${selectedUser.address.street}, ${selectedUser.address.city}, ${selectedUser.address.state} - ${selectedUser.address.pin}`,
+        mahaprasadFulfillment: {
+          mode: willCome === "NO" ? "courier" : "collection",
+          type: selectedPrasadType,
+        },
       },
       donationData: {
         amount: netPayableAmount,
@@ -2942,7 +3061,7 @@ const Receipt = () => {
                 </label>
                 <label
                   className={`flex items-center gap-2 ${
-                    isLocalUser
+                    isLocalUser || !isCourierDonationEligible
                       ? "cursor-not-allowed opacity-50"
                       : "cursor-pointer"
                   }`}
@@ -2954,15 +3073,60 @@ const Receipt = () => {
                     checked={willCome === "NO"}
                     onChange={(e) => setWillCome(e.target.value)}
                     className="w-4 h-4 text-green-600 focus:ring-green-500"
-                    disabled={isLocalUser}
+                    disabled={isLocalUser || !isCourierDonationEligible}
                   />
                   <span className="text-sm font-medium">NO</span>
                 </label>
               </div>
+              {willCome === "YES" && usesOnlyCategoryV2 && (
+                <div className="mt-4 border-t border-blue-200 pt-3">
+                  <p className="mb-2 text-sm font-semibold text-gray-700">
+                    Prasad to collect
+                  </p>
+                  <div className="flex flex-wrap gap-5">
+                    {hasGramCollectionOption && (
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="selectedPrasadType"
+                          value="halwa"
+                          checked={selectedPrasadType === "halwa"}
+                          onChange={(event) =>
+                            setSelectedPrasadType(event.target.value)
+                          }
+                        />
+                        Quantity in grams
+                      </label>
+                    )}
+                    {hasPacketCollectionOption && (
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="selectedPrasadType"
+                          value="packet"
+                          checked={selectedPrasadType === "packet"}
+                          onChange={(event) =>
+                            setSelectedPrasadType(event.target.value)
+                          }
+                        />
+                        Packet
+                      </label>
+                    )}
+                  </div>
+                </div>
+              )}
               {isLocalUser && (
                 <p className="text-xs text-gray-500 mt-2">
                   Courier option is not available for your location. Please
                   select "YES".
+                </p>
+              )}
+              {!isLocalUser && !isCourierDonationEligible && (
+                <p className="text-xs text-gray-500 mt-2">
+                  Courier requires at least ₹
+                  {minimumCourierDonationAmount.toLocaleString("en-IN")} from
+                  Prasad-eligible categories. Please select in-person
+                  collection.
                 </p>
               )}
             </div>
@@ -3036,7 +3200,23 @@ const Receipt = () => {
               </div>
 
               {selectedCategoryDetails?.dynamic?.isDynamic ? (
-                <div className="md:col-span-2">
+                <>
+                {selectedCategoryDetails.minimumAmountPerUnit && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Quantity
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Qty"
+                      className="w-full px-3 py-2 border rounded-lg"
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className={selectedCategoryDetails.minimumAmountPerUnit ? "" : "md:col-span-2"}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Amount (₹)
                   </label>
@@ -3049,6 +3229,7 @@ const Receipt = () => {
                     disabled={!selectedCategoryDetails}
                   />
                 </div>
+                </>
               ) : (
                 <>
                   <div>

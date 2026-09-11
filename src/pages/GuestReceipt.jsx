@@ -451,6 +451,11 @@ const ReceiptTemplate = ({
           >
             SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
           </div>
+          <div
+            style={{ color: "#15803d", fontSize: "12px", fontWeight: 600 }}
+          >
+            (Registered under Indian Trust Act - 1882)
+          </div>
           <div style={{ marginBottom: "1px", fontSize: "14px" }}>
             Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
             823003
@@ -1208,6 +1213,7 @@ const GuestReceipt = () => {
   const [dynamicAmount, setDynamicAmount] = useState("");
   const [donations, setDonations] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [selectedPrasadType, setSelectedPrasadType] = useState("halwa");
   const [remarks, setRemarks] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [minDonationWeight, setMinDonationWeight] = useState(0); // UPDATED: State for min weight
@@ -1355,6 +1361,32 @@ const GuestReceipt = () => {
     };
   }, [donations]);
 
+  const usesOnlyCategoryV2 =
+    donations.length > 0 &&
+    donations.every((item) => item.configurationVersion === "category-v2");
+  const hasGramCollectionOption = donations.some(
+    (item) =>
+      item.prasadType === "grams" ||
+      (item.prasadType === "packet" &&
+        item.allowGramAlternativeForInPerson)
+  );
+  const hasPacketCollectionOption = donations.some(
+    (item) => item.prasadType === "packet"
+  );
+
+  useEffect(() => {
+    if (!usesOnlyCategoryV2) return;
+    if (hasGramCollectionOption && !hasPacketCollectionOption) {
+      setSelectedPrasadType("halwa");
+    } else if (hasPacketCollectionOption && !hasGramCollectionOption) {
+      setSelectedPrasadType("packet");
+    }
+  }, [
+    hasGramCollectionOption,
+    hasPacketCollectionOption,
+    usesOnlyCategoryV2,
+  ]);
+
   // UPDATED: Calculate final displayed weight and difference for UI feedback
   const weightDifference =
     minDonationWeight > totalWeight && donations.length > 0
@@ -1458,8 +1490,26 @@ const GuestReceipt = () => {
     let newDonation;
     if (isDynamic) {
       const amount = Number(dynamicAmount) || 0;
-      if (amount <= 0) {
-        toast.warn("Please enter a valid amount for the dynamic donation.");
+      const donationQuantity = selectedCategoryDetails.minimumAmountPerUnit
+        ? parseInt(quantity, 10)
+        : 1;
+      if (
+        selectedCategoryDetails.minimumAmountPerUnit &&
+        (!Number.isInteger(donationQuantity) || donationQuantity < 1)
+      ) {
+        toast.warn("Please enter a valid quantity.");
+        return;
+      }
+      const minimumAmount =
+        selectedCategoryDetails.configurationVersion === "category-v2"
+          ? Number(selectedCategoryDetails.rate) * donationQuantity
+          : 0;
+      if (amount <= 0 || amount < minimumAmount) {
+        toast.warn(
+          minimumAmount > 0
+            ? `Please enter at least ₹${minimumAmount}.`
+            : "Please enter a valid amount for the donation."
+        );
         return;
       }
       let weight = 0;
@@ -1473,10 +1523,27 @@ const GuestReceipt = () => {
       newDonation = {
         id: Date.now(),
         category: selectedCategoryDetails.categoryName,
-        number: 1,
+        number: donationQuantity,
         amount: amount,
         isPacket: false,
         quantity: weight,
+        prasadType:
+          selectedCategoryDetails.configurationVersion === "category-v2"
+            ? selectedCategoryDetails.prasadType
+            : selectedCategoryDetails.categoryCode === "maa_durga_pratima"
+              ? "none"
+              : selectedCategoryDetails.packet
+                ? "packet"
+                : "grams",
+        allowGramAlternativeForInPerson:
+          selectedCategoryDetails.configurationVersion === "category-v2" &&
+          selectedCategoryDetails.prasadType === "packet" &&
+          (selectedCategoryDetails.allowGramAlternativeForInPerson ||
+            selectedCategoryDetails.categoryName
+              .toLowerCase()
+              .includes("professional")),
+        packetsPerUnit: selectedCategoryDetails.packetsPerUnit || 0,
+        configurationVersion: selectedCategoryDetails.configurationVersion,
       };
     } else {
       if (!quantity || parseInt(quantity, 10) < 1) {
@@ -1492,6 +1559,23 @@ const GuestReceipt = () => {
         amount: calculatedAmount,
         isPacket: selectedCategoryDetails.packet,
         quantity: selectedCategoryDetails.weight * parseInt(quantity, 10),
+        prasadType:
+          selectedCategoryDetails.configurationVersion === "category-v2"
+            ? selectedCategoryDetails.prasadType
+            : selectedCategoryDetails.categoryCode === "maa_durga_pratima"
+              ? "none"
+              : selectedCategoryDetails.packet
+                ? "packet"
+                : "grams",
+        allowGramAlternativeForInPerson:
+          selectedCategoryDetails.configurationVersion === "category-v2" &&
+          selectedCategoryDetails.prasadType === "packet" &&
+          (selectedCategoryDetails.allowGramAlternativeForInPerson ||
+            selectedCategoryDetails.categoryName
+              .toLowerCase()
+              .includes("professional")),
+        packetsPerUnit: selectedCategoryDetails.packetsPerUnit || 0,
+        configurationVersion: selectedCategoryDetails.configurationVersion,
       };
     }
     setDonations([...donations, newDonation]);
@@ -1523,6 +1607,7 @@ const GuestReceipt = () => {
     });
     setDonations([]);
     setPaymentMethod("Cash");
+    setSelectedPrasadType("halwa");
     setRemarks("");
     setSelectedCategoryId("");
     setQuantity(1);
@@ -1559,6 +1644,10 @@ const GuestReceipt = () => {
       list: donations.map(({ id: _id, ...rest }) => rest),
       method: paymentMethod,
       remarks,
+      mahaprasadFulfillment: {
+        mode: "collection",
+        type: selectedPrasadType,
+      },
       donorInfo: selectedDonor
         ? {
             fullname: selectedDonor.fullname,
@@ -1576,7 +1665,17 @@ const GuestReceipt = () => {
       );
       if (response.data.success) {
         setReceiptData(response.data.data);
-        setReceiptTotals({ totalWeight, totalPackets }); // Pass original totals
+        const savedList = response.data.data.donationData.list || [];
+        setReceiptTotals({
+          totalWeight: savedList.reduce(
+            (sum, item) => sum + (item.isPacket ? 0 : item.quantity || 0),
+            0
+          ),
+          totalPackets: savedList.reduce(
+            (sum, item) => sum + (item.isPacket ? item.quantity || 0 : 0),
+            0
+          ),
+        });
         setShowReceiptModal(true);
         toast.success(`${payload.method} donation recorded successfully!`);
         getGuestUserList();
@@ -1609,6 +1708,10 @@ const GuestReceipt = () => {
       payload: {
         list: donations.map(({ id: _id, ...rest }) => rest),
         remarks,
+        mahaprasadFulfillment: {
+          mode: "collection",
+          type: selectedPrasadType,
+        },
         donorInfo: selectedDonor
           ? {
               fullname: selectedDonor.fullname,
@@ -1662,10 +1765,17 @@ const GuestReceipt = () => {
         );
         if (response.data.success) {
           successfulReceipts.push(response.data.data);
+          const savedList = response.data.data.donationData.list || [];
           successfulReceiptTotals.push({
             receiptId: response.data.data.donationData.receiptId,
-            totalWeight: receipt.totalWeight,
-            totalPackets: receipt.totalPackets,
+            totalWeight: savedList.reduce(
+              (sum, item) => sum + (item.isPacket ? 0 : item.quantity || 0),
+              0
+            ),
+            totalPackets: savedList.reduce(
+              (sum, item) => sum + (item.isPacket ? item.quantity || 0 : 0),
+              0
+            ),
           });
         } else {
           failedReceipts.push({
@@ -2175,7 +2285,23 @@ const GuestReceipt = () => {
 
               {selectedCategoryDetails?.dynamic?.isDynamic ? (
                 // DYNAMIC CATEGORY VIEW
-                <div className="md:col-span-2">
+                <>
+                {selectedCategoryDetails.minimumAmountPerUnit && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Quantity
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Qty"
+                      className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className={selectedCategoryDetails.minimumAmountPerUnit ? "" : "md:col-span-2"}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Amount (₹)
                   </label>
@@ -2188,6 +2314,7 @@ const GuestReceipt = () => {
                     disabled={!selectedCategoryDetails}
                   />
                 </div>
+                </>
               ) : (
                 // STANDARD CATEGORY VIEW
                 <>
@@ -2316,11 +2443,15 @@ const GuestReceipt = () => {
                     Total Weight (g):{" "}
                     <span className="font-bold">
                       {/* --- UPDATED: Show final adjusted weight --- */}
-                      {finalDisplayedWeight.toLocaleString("en-IN")}
+                      {usesOnlyCategoryV2
+                        ? selectedPrasadType === "halwa"
+                          ? "Calculated on submission"
+                          : "0"
+                        : finalDisplayedWeight.toLocaleString("en-IN")}
                     </span>
                   </p>
                   {/* --- UPDATED: Conditionally show note --- */}
-                  {weightDifference > 0 && (
+                  {!usesOnlyCategoryV2 && weightDifference > 0 && (
                     <p className="text-xs text-purple-600 mt-1 text-right">
                       (Includes {Math.round(weightDifference)}g adjustment)
                     </p>
@@ -2328,7 +2459,19 @@ const GuestReceipt = () => {
                   <p className="text-sm flex justify-between pr-1">
                     Total Packets:{" "}
                     <span className="font-bold">
-                      {totalPackets.toLocaleString("en-IN")}
+                      {usesOnlyCategoryV2
+                        ? selectedPrasadType === "packet"
+                          ? donations
+                              .filter((item) => item.prasadType === "packet")
+                              .reduce(
+                                (sum, item) =>
+                                  sum +
+                                  item.number * (item.packetsPerUnit || 1),
+                                0
+                              )
+                              .toLocaleString("en-IN")
+                          : "0"
+                        : totalPackets.toLocaleString("en-IN")}
                     </span>
                   </p>
                 </div>
@@ -2355,6 +2498,44 @@ const GuestReceipt = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {usesOnlyCategoryV2 &&
+                  (hasGramCollectionOption || hasPacketCollectionOption) && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Prasad to collect
+                      </label>
+                      <div className="flex flex-wrap gap-5">
+                        {hasGramCollectionOption && (
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="guestPrasadType"
+                              value="halwa"
+                              checked={selectedPrasadType === "halwa"}
+                              onChange={(event) =>
+                                setSelectedPrasadType(event.target.value)
+                              }
+                            />
+                            Quantity in grams
+                          </label>
+                        )}
+                        {hasPacketCollectionOption && (
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="guestPrasadType"
+                              value="packet"
+                              checked={selectedPrasadType === "packet"}
+                              onChange={(event) =>
+                                setSelectedPrasadType(event.target.value)
+                              }
+                            />
+                            Packet
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 {donationType === "individual" && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">

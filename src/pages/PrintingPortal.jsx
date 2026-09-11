@@ -253,6 +253,77 @@ const DonationReceiptTemplate = forwardRef(
 
     const finalTotalAmount = donationData.amount + courierCharge;
     const totalWeightInGrams = totalWeight;
+    const transactionDate = new Date(
+      donationData.createdAt || donationData.date
+    ).toLocaleDateString("en-IN", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const profileAddress = [
+      guestData.address?.room ? `Room-${guestData.address.room}` : "",
+      guestData.address?.floor ? `Floor-${guestData.address.floor}` : "",
+      guestData.address?.apartment,
+      guestData.address?.landmark,
+      guestData.address?.street,
+      guestData.address?.postoffice
+        ? `PO: ${guestData.address.postoffice}`
+        : "",
+      guestData.address?.city,
+      guestData.address?.district,
+      guestData.address?.state,
+      guestData.address?.country,
+      guestData.address?.pin ? `PIN: ${guestData.address.pin}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const donorAddress =
+      donationData.userType === "guest" ||
+      donationData.postalAddress === "Will collect from Durga Sthan" ||
+      !donationData.postalAddress
+        ? profileAddress
+        : donationData.postalAddress;
+    const mobileNumber = [
+      guestData.contact?.mobileno?.code,
+      guestData.contact?.mobileno?.number,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const transactionYear = new Date(
+      donationData.createdAt || donationData.date
+    ).getFullYear();
+    const hasPratimaDonation = donationData.list?.some((item) =>
+      item.category?.toLowerCase().includes("pratima")
+    );
+    const hasOtherDonation = donationData.list?.some(
+      (item) => !item.category?.toLowerCase().includes("pratima")
+    );
+    const donationReason = hasPratimaDonation
+      ? hasOtherDonation
+        ? `Durga Puja Mahotsav and Pratima ${transactionYear}`
+        : `Durga Puja Pratima ${transactionYear}`
+      : `Durga Puja Mahotsav ${transactionYear}`;
+    const amountInWords = toWords(finalTotalAmount).replace(
+      /\s+Rupees Only$/,
+      ""
+    );
+    const receiptRowStyle = {
+      display: "flex",
+      alignItems: "baseline",
+      gap: "8px",
+      margin: "8px 0",
+      fontSize: "12px",
+    };
+    const receiptLabelStyle = {
+      fontStyle: "italic",
+      fontWeight: 600,
+      whiteSpace: "nowrap",
+    };
+    const receiptValueStyle = {
+      borderBottom: "2px dotted #777",
+      padding: "0 8px 3px",
+      minHeight: "18px",
+    };
 
     const convertGramsToKgAndGm = (totalGrams) => {
       const kg = Math.floor(totalGrams / 1000);
@@ -352,6 +423,11 @@ const DonationReceiptTemplate = forwardRef(
             >
               SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
             </div>
+            <div
+              style={{ color: "#15803d", fontSize: "12px", fontWeight: 600 }}
+            >
+              (Registered under Indian Trust Act - 1882)
+            </div>
             <div style={{ marginBottom: "1px", fontSize: "14px" }}>
               Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
               823003
@@ -402,58 +478,115 @@ const DonationReceiptTemplate = forwardRef(
               marginBottom: "12px",
             }}
           >
-            <h3
+            <div style={receiptRowStyle}>
+              <span style={receiptLabelStyle}>
+                Received with thanks from Mr./Mrs. :
+              </span>
+              <span style={{ ...receiptValueStyle, flex: 1 }}>
+                {donationData.donorName} {donationData.relationName}
+              </span>
+            </div>
+            <div style={{ ...receiptRowStyle, alignItems: "flex-start" }}>
+              <span style={receiptLabelStyle}>Address :</span>
+              <span style={{ ...receiptValueStyle, flex: 1, minWidth: 0 }}>
+                {donorAddress || "N/A"}
+              </span>
+              <span style={receiptLabelStyle}>Mobile :</span>
+              <span
+                style={{
+                  ...receiptValueStyle,
+                  minWidth: "115px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {mobileNumber || "N/A"}
+              </span>
+            </div>
+            <div style={receiptRowStyle}>
+              <span style={receiptLabelStyle}>the sum of Rupees :</span>
+              <span style={{ ...receiptValueStyle, flex: 1 }}>
+                {amountInWords} Only
+              </span>
+            </div>
+            <div
               style={{
-                marginTop: 0,
-                color: "#d32f2f",
-                borderBottom: "1px solid #eee",
-                paddingBottom: "3px",
-                fontSize: "14px",
-                marginBottom: "8px",
+                marginTop: "10px",
+                paddingTop: "3px",
               }}
             >
-              Donor Details
-            </h3>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <div style={{ flex: "1", paddingRight: "10px" }}>
-                <p style={{ fontSize: "12px", margin: "2px 0" }}>
-                  <strong>Name:</strong> {donationData.donorName} {donationData.relationName}
-                </p>
-                <p style={{ fontSize: "12px", margin: "2px 0" }}>
-                  <strong>Mobile:</strong> {guestData.contact?.mobileno?.code}{" "}{guestData.contact?.mobileno?.number}
-                </p>
-                <p style={{ fontSize: "12px", margin: "2px 0" }}>
-                  <strong>Address:</strong>
-                  {donationData.userType === 'guest'
-                    ? (
-                        <>
-                          ${guestData.address.street}, ${guestData.address.city}, ${guestData.address.state} - ${guestData.address.pin}
-                        </>
-                      )
-                    : donationData.postalAddress === "Will collect from Durga Sthan" || donationData.postalAddress === ""
-                      ? (
-                          <>
-                            {guestData.address?.room ? `Room-${guestData.address.room}, ` : ""}
-                            {guestData.address?.floor ? `Floor-${guestData.address.floor}, ` : ""}
-                            {guestData.address?.apartment ? `${guestData.address.apartment}, ` : ""}
-                            {guestData.address?.landmark ? `${guestData.address.landmark}, ` : ""}
-                            {guestData.address?.street ? `${guestData.address.street}, ` : ""}
-                            {guestData.address?.postoffice
-                              ? `PO: ${guestData.address.postoffice}, `
-                              : ""}
-                            {guestData.address?.city ? `${guestData.address.city}, ` : ""}
-                            {guestData.address?.district ? `${guestData.address.district}, ` : ""}
-                            {guestData.address?.state ? `${guestData.address.state}, ` : ""}
-                            {guestData.address?.country ? `${guestData.address.country} ` : ""}
-                            {guestData.address?.pin ? `- ${guestData.address.pin}` : ""}
-                          </>
-                        )
-                      : (
-                          donationData.postalAddress
-                        )
-                  }
-                </p>
+              <div style={receiptRowStyle}>
+                <span style={receiptLabelStyle}>by</span>
+                <span style={{ ...receiptValueStyle, flex: 0.7 }}>
+                  {donationData.method}
+                </span>
+                <span style={receiptLabelStyle}>Transaction No. :</span>
+                <span style={{ ...receiptValueStyle, flex: 1.4 }}>
+                  {donationData.transactionId || "N/A"}
+                </span>
+                <span style={receiptLabelStyle}>Dated</span>
+                <span style={{ ...receiptValueStyle, flex: 0.8 }}>
+                  {transactionDate}
+                </span>
               </div>
+              <div style={receiptRowStyle}>
+                <span style={receiptLabelStyle}>
+                  On account of donation for :
+                </span>
+                <span
+                  style={{ ...receiptValueStyle, flex: 1, textAlign: "center" }}
+                >
+                  {donationReason || "General Donation"}
+                </span>
+                <span style={receiptLabelStyle}>for charitable purposes.</span>
+              </div>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                marginTop: "10px",
+                fontSize: "12px",
+                fontWeight: 600,
+              }}
+            >
+              <span style={receiptLabelStyle}>Total Amount:</span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "stretch",
+                  border: "2px solid #222",
+                }}
+              >
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "6px 12px",
+                    borderRight: "2px solid #222",
+                    fontSize: "18px",
+                  }}
+                >
+                  ₹
+                </span>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    padding: "7px 14px",
+                    minWidth: "140px",
+                    textAlign: "right",
+                    fontSize: "14px",
+                  }}
+                >
+                  {Number(finalTotalAmount).toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </span>
             </div>
           </div>
           {financialSummary && financialSummary.difference !== 0 && (
@@ -496,47 +629,6 @@ const DonationReceiptTemplate = forwardRef(
               </p>
             </div>
           )}
-          <div
-            style={{
-              backgroundColor: "#f9f9f9",
-              padding: "10px",
-              border: "1px dashed #ddd",
-              borderRadius: "8px",
-              marginBottom: "12px",
-            }}
-          >
-            <h3
-              style={{
-                marginTop: 0,
-                color: "#d32f2f",
-                borderBottom: "1px solid #eee",
-                paddingBottom: "5px",
-                fontSize: "14px",
-                marginBottom: "8px",
-              }}
-            >
-              Donation Details
-            </h3>
-            <p style={{ fontSize: "12px", margin: "2px 0" }}>
-              <strong>Amount Donated:</strong> ₹
-              {finalTotalAmount.toLocaleString("en-IN")} (
-              {toWords(finalTotalAmount)} Rupees Only)
-            </p>
-            <p style={{ fontSize: "12px", margin: "2px 0" }}>
-              <strong>Mode of Payment:</strong> {donationData.method}
-            </p>
-            <p style={{ fontSize: "12px", margin: "2px 0" }}>
-              <strong>Date of Donation:</strong>{" "}
-              {new Date(donationData.createdAt || donationData.date).toLocaleDateString(
-                "en-IN",
-                { year: "numeric", month: "long", day: "numeric" }
-              )}
-            </p>
-            <p style={{ fontSize: "12px", margin: "2px 0" }}>
-              <strong>Purpose of Donation:</strong> Durga Puja celebrations and
-              societal welfare
-            </p>
-          </div>
           <div
             style={{
               display: "flex",

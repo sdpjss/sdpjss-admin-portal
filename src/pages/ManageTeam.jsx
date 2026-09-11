@@ -15,9 +15,17 @@ import {
   AlertCircle,
   Upload,
   UserCheck,
+  Calendar,
+  ListOrdered,
+  Filter,
 } from "lucide-react";
 import { useContext } from "react";
 import { AdminContext } from "../context/AdminContext";
+
+const today = new Date().toISOString().split("T")[0];
+
+const formatDateForInput = (value) =>
+  value ? new Date(value).toISOString().split("T")[0] : "";
 
 const ManageTeam = () => {
   const [members, setMembers] = useState([]);
@@ -28,6 +36,9 @@ const ManageTeam = () => {
     name: "",
     position: "",
     category: "chairman-vicechairman",
+    effectiveFrom: today,
+    effectiveTo: "",
+    order: 0,
     isActive: true,
   });
   const [image, setImage] = useState(null);
@@ -35,6 +46,7 @@ const ManageTeam = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [imagePreview, setImagePreview] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState("all");
 
   const { aToken, backendUrl } = useContext(AdminContext);
   const categories = [
@@ -123,6 +135,13 @@ const ManageTeam = () => {
       setError("Image is required for new team member.");
       return false;
     }
+    if (
+      formData.effectiveTo &&
+      formData.effectiveTo < formData.effectiveFrom
+    ) {
+      setError("Effective-to date cannot be before the effective-from date.");
+      return false;
+    }
     return true;
   };
 
@@ -140,6 +159,9 @@ const ManageTeam = () => {
       formDataToSend.append("name", formData.name.trim());
       formDataToSend.append("position", formData.position.trim());
       formDataToSend.append("category", formData.category);
+      formDataToSend.append("effectiveFrom", formData.effectiveFrom);
+      formDataToSend.append("effectiveTo", formData.effectiveTo);
+      formDataToSend.append("order", formData.order);
       formDataToSend.append("isActive", formData.isActive);
 
       if (image) {
@@ -171,7 +193,7 @@ const ManageTeam = () => {
 
       if (response.data.success) {
         setSuccess(response.data.message);
-        fetchMembers();
+        await fetchMembers();
         handleCloseModal();
       } else {
         setError(response.data.message || "Operation failed");
@@ -193,6 +215,11 @@ const ManageTeam = () => {
       name: member.name,
       position: member.position,
       category: member.category,
+      effectiveFrom: formatDateForInput(
+        member.effectiveFrom || member.createdAt
+      ),
+      effectiveTo: formatDateForInput(member.effectiveTo),
+      order: member.order ?? 0,
       isActive: member.isActive,
     });
     setImage(null);
@@ -274,6 +301,9 @@ const ManageTeam = () => {
       name: "",
       position: "",
       category: "chairman-vicechairman",
+      effectiveFrom: today,
+      effectiveTo: "",
+      order: 0,
       isActive: true,
     });
     setImage(null);
@@ -337,6 +367,10 @@ const ManageTeam = () => {
   );
 
   const activeMembers = members.filter((member) => member.isActive);
+  const filteredMembers =
+    categoryFilter === "all"
+      ? members
+      : members.filter((member) => member.category === categoryFilter);
 
   if (loading) {
     return (
@@ -406,23 +440,45 @@ const ManageTeam = () => {
 
       {/* Team Members Cards */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h2 className="text-base sm:text-lg font-semibold text-gray-900">
             Team Members
           </h2>
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <Filter className="w-4 h-4" />
+            <span className="sr-only">Filter by category</span>
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+              className="px-3 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">All categories</option>
+              {categories.map((category) => (
+                <option key={category.value} value={category.value}>
+                  {category.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
-        {members.length === 0 ? (
+        {filteredMembers.length === 0 ? (
           <div className="bg-white rounded-lg shadow-sm border border-gray-100 text-center py-12">
             <Users className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500 mb-2">No team members found</p>
+            <p className="text-gray-500 mb-2">
+              {members.length === 0
+                ? "No team members found"
+                : "No members found in this category"}
+            </p>
             <p className="text-sm text-gray-400">
-              Add your first team member to get started!
+              {members.length === 0
+                ? "Add your first team member to get started!"
+                : "Select another category to view its members."}
             </p>
           </div>
         ) : (
           <div className="grid gap-3 sm:gap-4">
-            {members.map((member) => (
+            {filteredMembers.map((member) => (
               <div
                 key={member._id}
                 className="bg-white rounded-lg shadow-sm border border-gray-100 p-3 sm:p-4 hover:shadow-md transition-shadow"
@@ -454,6 +510,22 @@ const ManageTeam = () => {
                           <Tag className="w-3 h-3" />
                           <span className="truncate">
                             {getCategoryLabel(member.category)}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-500">
+                          <span className="inline-flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            {formatDateForInput(
+                              member.effectiveFrom || member.createdAt
+                            )}
+                            {" — "}
+                            {member.effectiveTo
+                              ? formatDateForInput(member.effectiveTo)
+                              : "Present"}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <ListOrdered className="w-3 h-3" />
+                            Order {member.order ?? 0}
                           </span>
                         </div>
                       </div>
@@ -587,6 +659,58 @@ const ManageTeam = () => {
                       </select>
                     </div>
 
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <Calendar className="w-4 h-4 inline mr-1" />
+                          Effective from *
+                        </label>
+                        <input
+                          type="date"
+                          name="effectiveFrom"
+                          value={formData.effectiveFrom}
+                          onChange={handleInputChange}
+                          required
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <Calendar className="w-4 h-4 inline mr-1" />
+                          Effective to
+                        </label>
+                        <input
+                          type="date"
+                          name="effectiveTo"
+                          min={formData.effectiveFrom}
+                          value={formData.effectiveTo}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                        />
+                        <p className="mt-1 text-xs text-gray-500">
+                          Leave blank while currently serving.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <ListOrdered className="w-4 h-4 inline mr-1" />
+                        Display order
+                      </label>
+                      <input
+                        type="number"
+                        name="order"
+                        min="0"
+                        value={formData.order}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Lower numbers appear first within a section.
+                      </p>
+                    </div>
+
                     <div className="flex items-center">
                       <input
                         type="checkbox"
@@ -596,7 +720,7 @@ const ManageTeam = () => {
                         className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                       />
                       <label className="ml-2 block text-sm text-gray-700">
-                        Active (visible on public page)
+                        Active member
                       </label>
                     </div>
                   </div>
