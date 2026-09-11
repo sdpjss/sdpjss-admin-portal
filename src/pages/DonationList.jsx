@@ -242,7 +242,7 @@ const DonationList = () => {
       (d) => d.paymentStatus === "completed" && !d.refunded
     );
 
-    if (activeTab === "donations") {
+    if (["donations", "courier", "pratima"].includes(activeTab)) {
       return completedDonations.filter((d) => {
         const donationDate = new Date(d.createdAt).toISOString().split("T")[0];
         if (
@@ -287,6 +287,10 @@ const DonationList = () => {
   };
 
   const filteredDonations = getFilteredDonations();
+
+  const isPratimaItem = (item) =>
+    item.categoryCode === "maa_durga_pratima" ||
+    item.category?.toLowerCase().includes("pratima");
 
   const groupDonationsByCategory = (donations) => {
     const grouped = {};
@@ -430,14 +434,48 @@ const DonationList = () => {
 
   // Tab Content Components
   const DonationsTab = () => {
+    const reportDonations = filteredDonations.filter((donation) => {
+      if (activeTab === "courier") return Number(donation.courierCharge) > 0;
+      if (activeTab === "pratima") return donation.list.some(isPratimaItem);
+      return true;
+    });
+    const getPratimaAmount = (donation) =>
+      donation.list
+        .filter(isPratimaItem)
+        .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const getPratimaQuantity = (donation) =>
+      donation.list
+        .filter(isPratimaItem)
+        .reduce((sum, item) => sum + (Number(item.number) || 0), 0);
+    const getDonationAmount = (donation) =>
+      donation.list.reduce(
+        (sum, item) => sum + (Number(item.amount) || 0),
+        0
+      );
+    const donationAmount = reportDonations.reduce(
+      (sum, donation) => sum + getDonationAmount(donation),
+      0
+    );
+    const courierAmount = reportDonations.reduce(
+      (sum, donation) => sum + (Number(donation.courierCharge) || 0),
+      0
+    );
+    const pratimaAmount = reportDonations.reduce(
+      (sum, donation) => sum + getPratimaAmount(donation),
+      0
+    );
+    const pratimaQuantity = reportDonations.reduce(
+      (sum, donation) => sum + getPratimaQuantity(donation),
+      0
+    );
     const stats = {
-      totalCount: filteredDonations.length,
-      completedCount: filteredDonations.filter(
+      totalCount: reportDonations.length,
+      completedCount: reportDonations.filter(
         (d) => d.paymentStatus === "completed"
       ).length,
-      totalAmount: filteredDonations.reduce((sum, d) => sum + d.amount, 0),
-      uniqueDonors: new Set(filteredDonations.map((d) => d.userId._id)).size,
-      totalWeight: filteredDonations.reduce((total, donation) => {
+      totalAmount: donationAmount,
+      uniqueDonors: new Set(reportDonations.map((d) => d.userId._id)).size,
+      totalWeight: reportDonations.reduce((total, donation) => {
         const donationWeight = donation.list.reduce(
           (itemSum, item) => itemSum + (item.isPacket ? 0 : item.quantity || 0),
           0
@@ -445,7 +483,7 @@ const DonationList = () => {
         return total + donationWeight;
       }, 0),
 
-      totalPacketCount: filteredDonations.reduce((total, donation) => {
+      totalPacketCount: reportDonations.reduce((total, donation) => {
         const donationPackets = donation.list.reduce(
           (itemSum, item) => itemSum + (item.isPacket ? item.quantity : 0),
           0
@@ -457,7 +495,7 @@ const DonationList = () => {
     const handleExport = (format) => {
       // Re-organize data for export based on your request
       const exportDataList = [];
-      const sortedDonations = [...filteredDonations].sort(
+      const sortedDonations = [...reportDonations].sort(
         (a, b) =>
           new Date(a.createdAt) - new Date(b.createdAt) ||
           (a.userId.fullname || "").localeCompare(b.userId.fullname || "")
@@ -547,30 +585,28 @@ const DonationList = () => {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            title="Total Donations"
-            value={stats.totalCount}
-            icon={<FileText size={22} />}
-            color="text-blue-600"
-          />
-          <StatCard
-            title="Total Amount"
-            value={stats.totalAmount}
-            icon={<DollarSign size={22} />}
-            color="text-purple-600"
-          />
-          <StatCard
-            title="Total Weight"
-            value={`${(stats.totalWeight / 1000).toLocaleString()} kg`}
-            icon={<Scale size={22} />}
-            color="text-green-600"
-          />
-          <StatCard
-            title="Total Packet Count"
-            value={stats.totalPacketCount.toLocaleString()}
-            icon={<Package size={22} />}
-            color="text-orange-600"
-          />
+          {activeTab === "courier" ? (
+            <>
+              <StatCard title="Courier Receipts" value={stats.totalCount} icon={<FileText size={22} />} color="text-blue-600" />
+              <StatCard title="Courier Charge Amount" value={courierAmount} icon={<Package size={22} />} color="text-orange-600" />
+              <StatCard title="Donation Amount" value={donationAmount} icon={<DollarSign size={22} />} color="text-purple-600" />
+              <StatCard title="Total Collected Amount" value={donationAmount + courierAmount} icon={<TrendingUp size={22} />} color="text-green-600" />
+            </>
+          ) : activeTab === "pratima" ? (
+            <>
+              <StatCard title="Pratima Receipts" value={stats.totalCount} icon={<FileText size={22} />} color="text-blue-600" />
+              <StatCard title="Pratima Donation Amount" value={pratimaAmount} icon={<DollarSign size={22} />} color="text-orange-600" />
+              <StatCard title="Pratima Quantity" value={pratimaQuantity} icon={<Tag size={22} />} color="text-purple-600" />
+              <StatCard title="Combined Receipt Amount" value={donationAmount} icon={<TrendingUp size={22} />} color="text-green-600" />
+            </>
+          ) : (
+            <>
+              <StatCard title="Total Donations" value={stats.totalCount} icon={<FileText size={22} />} color="text-blue-600" />
+              <StatCard title="Total Amount" value={stats.totalAmount} icon={<DollarSign size={22} />} color="text-purple-600" />
+              <StatCard title="Total Weight" value={`${(stats.totalWeight / 1000).toLocaleString()} kg`} icon={<Scale size={22} />} color="text-green-600" />
+              <StatCard title="Total Packet Count" value={stats.totalPacketCount.toLocaleString()} icon={<Package size={22} />} color="text-orange-600" />
+            </>
+          )}
         </div>
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
           <div className="flex items-center gap-2 mb-4">
@@ -678,29 +714,32 @@ const DonationList = () => {
             >
               <X size={16} /> Clear All Filters
             </button>
-            <ExportDropdown onExport={handleExport} />
+            {activeTab === "donations" && (
+              <ExportDropdown onExport={handleExport} />
+            )}
           </div>
         </div>
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
           <div className="p-4 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">
-              Donations List ({stats.totalCount})
+              {activeTab === "courier"
+                ? "Courier Charges"
+                : activeTab === "pratima"
+                  ? "Pratima Donations"
+                  : "Donations excluding Courier Charges"}{" "}
+              ({stats.totalCount})
             </h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
-                  {[
-                    "Receipt #",
-                    "User",
-                    "Donated For",
-                    "Categories",
-                    "Amount",
-                    "Method",
-                    "Status",
-                    "Date",
-                  ].map((h) => (
+                  {(activeTab === "courier"
+                    ? ["Receipt #", "User", "Donation Amount", "Courier Charge", "Total Paid", "Delivery Address", "Method", "Date"]
+                    : activeTab === "pratima"
+                      ? ["Receipt #", "User", "Pratima Quantity", "Pratima Amount", "Other Donations", "Receipt Donation Total", "Method", "Date"]
+                      : ["Receipt #", "User", "Donated For", "Categories", "Donation Amount", "Method", "Status", "Date"]
+                  ).map((h) => (
                     <th
                       key={h}
                       className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -711,7 +750,7 @@ const DonationList = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredDonations.map((d) => (
+                {reportDonations.map((d) => (
                   <tr key={d._id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">
                       {d.receiptId}
@@ -728,30 +767,34 @@ const DonationList = () => {
                         )}
                       </div>
                     </td>
-                    <td>
-                      <div className="px-4 py-3 text-sm text-gray-900">
-                        {d.donatedAs === "child" ? "Child" : "Self"}
-                        <p className="text-xs text-gray-500">
-                          {d.donatedAs === "child" ? d.donatedFor.fullname : ""}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      {d.list.map((item, index) => (
-                        <div key={index}>
-                          {item.category}{" "}
-                          <span className="font-semibold">({item.number})</span>
-                        </div>
-                      ))}
-                      {d.courierCharge > 0 && (
-                        <div>
-                          Courier <span className="font-semibold">(1)</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      ₹{d.amount.toLocaleString("en-IN")}
-                    </td>
+                    {activeTab === "courier" ? (
+                      <>
+                        <td className="px-4 py-3 text-sm text-gray-900">₹{getDonationAmount(d).toLocaleString("en-IN")}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-orange-700">₹{Number(d.courierCharge).toLocaleString("en-IN")}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">₹{(getDonationAmount(d) + Number(d.courierCharge)).toLocaleString("en-IN")}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700 min-w-64">{d.postalAddress || "Not available"}</td>
+                      </>
+                    ) : activeTab === "pratima" ? (
+                      <>
+                        <td className="px-4 py-3 text-sm text-gray-900">{getPratimaQuantity(d).toLocaleString("en-IN")}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-orange-700">₹{getPratimaAmount(d).toLocaleString("en-IN")}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900">₹{Math.max(0, getDonationAmount(d) - getPratimaAmount(d)).toLocaleString("en-IN")}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">₹{getDonationAmount(d).toLocaleString("en-IN")}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td>
+                          <div className="px-4 py-3 text-sm text-gray-900">
+                            {d.donatedAs === "child" ? "Child" : "Self"}
+                            <p className="text-xs text-gray-500">{d.donatedAs === "child" ? d.donatedFor?.fullname : ""}</p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {d.list.map((item, index) => <div key={index}>{item.category} <span className="font-semibold">({item.number})</span></div>)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">₹{getDonationAmount(d).toLocaleString("en-IN")}</td>
+                      </>
+                    )}
                     <td className="px-4 py-3 text-sm">
                       <span
                         className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -763,31 +806,32 @@ const DonationList = () => {
                         {d.method}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          d.paymentStatus === "Completed"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {d.paymentStatus}
-                      </span>
-                    </td>
+                    {activeTab === "donations" && (
+                      <td className="px-4 py-3 text-sm">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">{d.paymentStatus}</span>
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-sm text-gray-900">
                       {new Date(d.createdAt).toLocaleDateString("en-IN")}
                     </td>
                   </tr>
                 ))}
+                {reportDonations.length === 0 && (
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">No records found for the selected view and filters.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
           <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-between items-center">
             <div className="text-sm text-gray-600">
-              Total: {stats.totalCount} donations
+              Total: {stats.totalCount} receipt{stats.totalCount === 1 ? "" : "s"}
             </div>
             <div className="text-lg font-semibold text-gray-900">
-              Total Amount: ₹{stats.totalAmount.toLocaleString("en-IN")}
+              {activeTab === "courier"
+                ? `Courier Charges: ₹${courierAmount.toLocaleString("en-IN")}`
+                : activeTab === "pratima"
+                  ? `Pratima Donations: ₹${pratimaAmount.toLocaleString("en-IN")}`
+                  : `Donation Amount: ₹${stats.totalAmount.toLocaleString("en-IN")}`}
             </div>
           </div>
         </div>
@@ -1403,7 +1447,9 @@ const DonationList = () => {
     );
 
   const tabs = [
-    { name: "All Donations", key: "donations" },
+    { name: "All Donations (Excl. Courier)", key: "donations" },
+    { name: "Courier Charges", key: "courier" },
+    { name: "Pratima Donations", key: "pratima" },
     { name: "Pending & Failed", key: "pending_failed" },
     { name: "Recent Donations", key: "recent" },
     { name: "Overall Analytics", key: "overall" },
@@ -1445,7 +1491,7 @@ const DonationList = () => {
           </div>
         </div>
         <div className="border-b border-gray-200 mt-4">
-          <nav className="-mb-px flex space-x-6" aria-label="Tabs">
+          <nav className="-mb-px flex space-x-6 overflow-x-auto" aria-label="Tabs">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
@@ -1465,6 +1511,8 @@ const DonationList = () => {
 
       {/* MODIFIED: Added rendering for the new tab */}
       {activeTab === "donations" && <DonationsTab />}
+      {activeTab === "courier" && <DonationsTab />}
+      {activeTab === "pratima" && <DonationsTab />}
       {activeTab === "pending_failed" && <PendingFailedTab />}
       {activeTab === "recent" && <RecentDonationsTab />}
       {activeTab === "overall" && <OverallDonationsTab />}
