@@ -19,9 +19,11 @@ import {
   Clock,
   RefreshCw,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
+import DonationFulfillmentEditModal from "../components/DonationFulfillmentEditModal";
 
 // Helper component for the export dropdown (No changes needed here)
 const ExportDropdown = ({ onExport, color = "blue" }) => {
@@ -109,6 +111,7 @@ const DonationList = () => {
   const [availableCategories, setAvailableCategories] = useState([]);
   const [dateRange, setDateRange] = useState({ min: "", max: "" });
   const [reconcilingId, setReconcilingId] = useState(null);
+  const [donationBeingCorrected, setDonationBeingCorrected] = useState(null);
 
   const { backendUrl, donationList, getDonationList, aToken } =
     useContext(AdminContext);
@@ -734,12 +737,14 @@ const DonationList = () => {
             <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
-                  {(activeTab === "courier"
-                    ? ["Receipt #", "User", "Donation Amount", "Courier Charge", "Total Paid", "Delivery Address", "Method", "Date"]
-                    : activeTab === "pratima"
-                      ? ["Receipt #", "User", "Pratima Quantity", "Pratima Amount", "Other Donations", "Receipt Donation Total", "Method", "Date"]
-                      : ["Receipt #", "User", "Donated For", "Categories", "Donation Amount", "Method", "Status", "Date"]
-                  ).map((h) => (
+                  {[
+                    ...(activeTab === "courier"
+                      ? ["Receipt #", "User", "Donation Amount", "Courier Charge", "Total Paid", "Delivery Address", "Method", "Date"]
+                      : activeTab === "pratima"
+                        ? ["Receipt #", "User", "Pratima Quantity", "Pratima Amount", "Other Donations", "Receipt Donation Total", "Method", "Date"]
+                        : ["Receipt #", "User", "Donated For", "Categories", "Donation Amount", "Method", "Status", "Date"]),
+                    ...(donationType === "registered" ? ["Actions"] : []),
+                  ].map((h) => (
                     <th
                       key={h}
                       className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -814,10 +819,22 @@ const DonationList = () => {
                     <td className="px-4 py-3 text-sm text-gray-900">
                       {new Date(d.createdAt).toLocaleDateString("en-IN")}
                     </td>
+                    {donationType === "registered" && (
+                      <td className="px-4 py-3 text-sm">
+                        <button
+                          type="button"
+                          onClick={() => setDonationBeingCorrected(d)}
+                          className="flex items-center gap-2 rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                        >
+                          <Pencil size={14} />
+                          Edit
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {reportDonations.length === 0 && (
-                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">No records found for the selected view and filters.</td></tr>
+                  <tr><td colSpan={donationType === "registered" ? 9 : 8} className="px-4 py-10 text-center text-sm text-gray-500">No records found for the selected view and filters.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1516,6 +1533,13 @@ const DonationList = () => {
       {activeTab === "pending_failed" && <PendingFailedTab />}
       {activeTab === "recent" && <RecentDonationsTab />}
       {activeTab === "overall" && <OverallDonationsTab />}
+      {donationBeingCorrected && (
+        <DonationFulfillmentEditModal
+          donation={donationBeingCorrected}
+          onClose={() => setDonationBeingCorrected(null)}
+          onUpdated={getDonationList}
+        />
+      )}
     </div>
   );
 };
