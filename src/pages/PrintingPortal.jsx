@@ -279,6 +279,10 @@ const DonationReceiptTemplate = forwardRef(
       .join(", ");
     const donorAddress =
       donationData.userType === "guest" ||
+      donationData.userType === "child" ||
+      donationData.donatedAs === "child" ||
+      donationData.postalAddress ===
+        "No Mahaprasad - Voluntary child donation" ||
       donationData.postalAddress === "Will collect from Durga Sthan" ||
       !donationData.postalAddress
         ? profileAddress
