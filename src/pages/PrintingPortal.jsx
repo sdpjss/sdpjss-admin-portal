@@ -13,7 +13,10 @@ import { saveAs } from 'file-saver';
 import html2pdf from "html2pdf.js";
 import { AdminContext } from "../context/AdminContext";
 import DonationEditModal from "../components/DonationEditModal";
+import PublicDonationReceiptTemplate from "../components/DonationReceiptTemplate";
+import PrasadTokenTemplate from "../components/PrasadTokenTemplate";
 import { printElements } from "../utils/printElements";
+import { getSavedPrasadTotals } from "../utils/prasadCalculation";
 
 const addressLabelStyles = `
 
@@ -59,70 +62,6 @@ const addressLabelStyles = `
         height: 100%;
     }
 `;
-
-// Helper function to convert number to Indian currency words (remains unchanged)
-const toWords = (num) => {
-  const ones = [
-    "",
-    "One",
-    "Two",
-    "Three",
-    "Four",
-    "Five",
-    "Six",
-    "Seven",
-    "Eight",
-    "Nine",
-    "Ten",
-    "Eleven",
-    "Twelve",
-    "Thirteen",
-    "Fourteen",
-    "Fifteen",
-    "Sixteen",
-    "Seventeen",
-    "Eighteen",
-    "Nineteen",
-  ];
-  const tens = [
-    "",
-    "",
-    "Twenty",
-    "Thirty",
-    "Forty",
-    "Fifty",
-    "Sixty",
-    "Seventy",
-    "Eighty",
-    "Ninety",
-  ];
-  const numToWords = (n) => {
-    let word = "";
-    if (n === 0) return word;
-    if (n < 20) {
-      word = ones[n];
-    } else {
-      word =
-        tens[Math.floor(n / 10)] + (n % 10 !== 0 ? " " + ones[n % 10] : "");
-    }
-    return word;
-  };
-  const number = Math.round(num);
-  if (number === 0) return "Zero Rupees Only";
-  if (number > 999999999) return "Number is too large";
-  let result = "";
-  const crore = Math.floor(number / 10000000);
-  const lakh = Math.floor((number % 10000000) / 100000);
-  const thousand = Math.floor((number % 100000) / 1000);
-  const hundred = Math.floor((number % 1000) / 100);
-  const rest = number % 100;
-  if (crore) result += numToWords(crore) + " Crore ";
-  if (lakh) result += numToWords(lakh) + " Lakh ";
-  if (thousand) result += numToWords(thousand) + " Thousand ";
-  if (hundred) result += numToWords(hundred) + " Hundred ";
-  if (rest) result += numToWords(rest);
-  return result.trim().replace(/\s+/g, " ") + " Rupees Only";
-};
 
 // Helper function (place this outside the component, or inside but before the return)
 const chunkArray = (arr, size) => {
@@ -235,690 +174,77 @@ const AddressLabel = ({ addressData }) => {
   );
 };
 
-// DonationReceiptTemplate component (remains unchanged)
-const DonationReceiptTemplate = forwardRef(
+const PrintableDonationDocument = forwardRef(
   (
     {
       donationData,
       guestData,
-      adminName,
-      financialSummary,
       totalWeight,
       totalPackets,
       courierCharge = 0,
+      documentType = "receipt",
     },
     ref
   ) => {
     if (!donationData || !guestData) return null;
 
-    const finalTotalAmount = donationData.amount + courierCharge;
-    const totalWeightInGrams = totalWeight;
-    const transactionDate = new Date(
-      donationData.createdAt || donationData.date
-    ).toLocaleDateString("en-IN", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    const profileAddress = [
-      guestData.address?.room ? `Room-${guestData.address.room}` : "",
-      guestData.address?.floor ? `Floor-${guestData.address.floor}` : "",
-      guestData.address?.apartment,
-      guestData.address?.landmark,
-      guestData.address?.street,
-      guestData.address?.postoffice
-        ? `PO: ${guestData.address.postoffice}`
-        : "",
-      guestData.address?.city,
-      guestData.address?.district,
-      guestData.address?.state,
-      guestData.address?.country,
-      guestData.address?.pin ? `PIN: ${guestData.address.pin}` : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    const donorAddress =
-      donationData.userType === "guest" ||
-      donationData.userType === "child" ||
-      donationData.donatedAs === "child" ||
-      donationData.postalAddress ===
-        "No Mahaprasad - Voluntary child donation" ||
-      donationData.postalAddress === "Will collect from Durga Sthan" ||
-      !donationData.postalAddress
-        ? profileAddress
-        : donationData.postalAddress;
-    const mobileNumber = [
-      guestData.contact?.mobileno?.code,
-      guestData.contact?.mobileno?.number,
-    ]
-      .filter(Boolean)
-      .join(" ");
-    const transactionYear = new Date(
-      donationData.createdAt || donationData.date
-    ).getFullYear();
-    const hasPratimaDonation = donationData.list?.some((item) =>
-      item.category?.toLowerCase().includes("pratima")
-    );
-    const hasOtherDonation = donationData.list?.some(
-      (item) => !item.category?.toLowerCase().includes("pratima")
-    );
-    const donationReason = hasPratimaDonation
-      ? hasOtherDonation
-        ? `Durga Puja Mahotsav and Pratima ${transactionYear}`
-        : `Durga Puja Pratima ${transactionYear}`
-      : `Durga Puja Mahotsav ${transactionYear}`;
-    const amountInWords = toWords(finalTotalAmount).replace(
-      /\s+Rupees Only$/,
-      ""
-    );
-    const receiptRowStyle = {
-      display: "flex",
-      alignItems: "baseline",
-      gap: "8px",
-      margin: "8px 0",
-      fontSize: "12px",
+    const populatedUser =
+      donationData.userId && typeof donationData.userId === "object"
+        ? donationData.userId
+        : guestData;
+    const user = {
+      ...populatedUser,
+      contact: populatedUser.contact || guestData.contact,
+      address: populatedUser.address || guestData.address,
+      fullname:
+        populatedUser.fullname || donationData.donorName || guestData.fullname,
+      fatherName:
+        populatedUser.fatherName ||
+        populatedUser.father ||
+        guestData.fatherName ||
+        guestData.father ||
+        "",
     };
-    const receiptLabelStyle = {
-      fontStyle: "italic",
-      fontWeight: 600,
-      whiteSpace: "nowrap",
+    const childUser =
+      donationData.donatedFor &&
+      typeof donationData.donatedFor === "object"
+        ? donationData.donatedFor
+        : undefined;
+    const receiptDonation = {
+      ...donationData,
+      amount:
+        Number(donationData.amount || 0) + Number(courierCharge || 0),
     };
-    const receiptValueStyle = {
-      borderBottom: "2px dotted #777",
-      padding: "0 8px 3px",
-      minHeight: "18px",
-    };
-
-    const convertGramsToKgAndGm = (totalGrams) => {
-      const kg = Math.floor(totalGrams / 1000);
-      const grams = totalGrams % 1000;
-
-      if (kg > 0) {
-        if (grams > 0) {
-          return `${kg} kg ${grams} gm`;
-        }
-        return `${kg} kg`;
-      }
-      return `${grams} gm`;
-    };
-
-    const quantityToDisplay = (totalWeightInGrams, totalPackets) => {
-      let qtyToPrint = "";
-      const totalWeight = convertGramsToKgAndGm(totalWeightInGrams);
-      if (totalWeightInGrams > 0) {
-        qtyToPrint += totalWeight.toLocaleString("en-IN");
-      }
-      if (totalWeightInGrams > 0 && totalPackets > 0) {
-        qtyToPrint += " and ";
-      }
-      if (totalPackets > 0) {
-        qtyToPrint += `${totalPackets.toLocaleString("en-IN")} ${totalPackets === 1 ? "packet" : "packets"}`;
-      }
-      return qtyToPrint;
-    };
+    const receiptData = { donation: receiptDonation, user, childUser };
 
     return (
-      <div ref={ref} className="m-2">
-        <style>
-          {`@media print { body { -webkit-print-color-adjust: exact; } .bill-container { box-shadow: none !important; border: none !important;} }`}
-        </style>
-        <div
-          style={{
-            position: "absolute",
-            top: "35%",
-            left: "50%",
-            width: "60%",
-            height: "60%",
-            transform: "translate(-50%, -50%)",
-            backgroundImage:
-              "url(https://res.cloudinary.com/needlesscat/image/upload/v1754307740/logo_unr2rc.jpg)",
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "center center",
-            backgroundSize: "contain",
-            opacity: 0.08,
-            zIndex: 10,
-            pointerEvents: "none",
-          }}
-        ></div>
-        <div
-          className="bill-container"
-          style={{
-            maxWidth: "800px",
-            margin: "auto",
-            border: "1px solid #ccc",
-            padding: "10px 20px",
-            boxShadow: "0 0 10px rgba(0,0,0,0.1)",
-            fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-            color: "#333",
-            position: "relative",
-            backgroundColor: "white",
-          }}
-        >
-          <div
-            className="header"
-            style={{
-              textAlign: "center",
-              borderBottom: "2px solid #d32f2f",
-              paddingBottom: "10px",
-              marginBottom: "10px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "12px",
-                display: "flex",
-                justifyContent: "space-between",
-              }}
-            >
-              <span>
-                <b>Estd. 1939</b>
-              </span>
-              <span>
-                <b>Reg. No. 2020/272</b>
-              </span>
-            </div>
-            <div
-              style={{
-                fontSize: "24px",
-                fontWeight: "bold",
-                color: "#d32f2f",
-                marginBottom: "1px",
-              }}
-            >
-              SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
-            </div>
-            <div
-              style={{ color: "#15803d", fontSize: "12px", fontWeight: 600 }}
-            >
-              (Registered under Indian Trust Act - 1882)
-            </div>
-            <div style={{ marginBottom: "1px", fontSize: "14px" }}>
-              Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
-              823003
-            </div>
-            <div style={{ fontSize: "12px", color: "#444" }}>
-              <strong>PAN:</strong> ABBTS1301C | <strong>Contact:</strong> 0631
-              2952160, +91 9472030916 | <strong>Email:</strong>{" "}
-              sdpjssmanpur@gmail.com
-            </div>
-          </div>
-          <div
-            style={{
-              fontSize: "16px",
-              fontWeight: 600,
-              textAlign: "center",
-              margin: "5px 0",
-              letterSpacing: "1px",
-            }}
-          >
-            DONATION RECEIPT
-          </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              marginBottom: "8px",
-              fontSize: "12px",
-            }}
-          >
-            <div>
-              <strong>Receipt No:</strong> {donationData.receiptId}
-            </div>
-            <div>
-              <strong>Date: </strong>
-              {new Date(donationData.createdAt).toLocaleDateString("en-IN", {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
-            </div>
-          </div>
-          <div
-            style={{
-              backgroundColor: "#f9f9f9",
-              padding: "10px",
-              border: "1px dashed #ddd",
-              borderRadius: "8px",
-              marginBottom: "12px",
-            }}
-          >
-            <div style={receiptRowStyle}>
-              <span style={receiptLabelStyle}>
-                Received with thanks from Mr./Mrs. :
-              </span>
-              <span style={{ ...receiptValueStyle, flex: 1 }}>
-                {donationData.donorName} {donationData.relationName}
-              </span>
-            </div>
-            <div style={{ ...receiptRowStyle, alignItems: "flex-start" }}>
-              <span style={receiptLabelStyle}>Address :</span>
-              <span style={{ ...receiptValueStyle, flex: 1, minWidth: 0 }}>
-                {donorAddress || "N/A"}
-              </span>
-              <span style={receiptLabelStyle}>Mobile :</span>
-              <span
-                style={{
-                  ...receiptValueStyle,
-                  minWidth: "115px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {mobileNumber || "N/A"}
-              </span>
-            </div>
-            <div style={receiptRowStyle}>
-              <span style={receiptLabelStyle}>the sum of Rupees :</span>
-              <span style={{ ...receiptValueStyle, flex: 1 }}>
-                {amountInWords} Only
-              </span>
-            </div>
-            <div
-              style={{
-                marginTop: "10px",
-                paddingTop: "3px",
-              }}
-            >
-              <div style={receiptRowStyle}>
-                <span style={receiptLabelStyle}>by</span>
-                <span style={{ ...receiptValueStyle, flex: 0.7 }}>
-                  {donationData.method}
-                </span>
-                <span style={receiptLabelStyle}>Transaction No. :</span>
-                <span style={{ ...receiptValueStyle, flex: 1.4 }}>
-                  {donationData.transactionId || "N/A"}
-                </span>
-                <span style={receiptLabelStyle}>Dated</span>
-                <span style={{ ...receiptValueStyle, flex: 0.8 }}>
-                  {transactionDate}
-                </span>
-              </div>
-              <div style={receiptRowStyle}>
-                <span style={receiptLabelStyle}>
-                  On account of donation for :
-                </span>
-                <span
-                  style={{ ...receiptValueStyle, flex: 1, textAlign: "center" }}
-                >
-                  {donationReason || "General Donation"}
-                </span>
-                <span style={receiptLabelStyle}>for charitable purposes.</span>
-              </div>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                marginTop: "10px",
-                fontSize: "12px",
-                fontWeight: 600,
-              }}
-            >
-              <span style={receiptLabelStyle}>Total Amount:</span>
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "stretch",
-                  border: "2px solid #222",
-                }}
-              >
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "6px 12px",
-                    borderRight: "2px solid #222",
-                    fontSize: "18px",
-                  }}
-                >
-                  ₹
-                </span>
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-end",
-                    padding: "7px 14px",
-                    minWidth: "140px",
-                    textAlign: "right",
-                    fontSize: "14px",
-                  }}
-                >
-                  {Number(finalTotalAmount).toLocaleString("en-IN", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </span>
-              </span>
-            </div>
-          </div>
-          {financialSummary && financialSummary.difference !== 0 && (
-            <div
-              style={{
-                border: "2px solid #0284c7",
-                padding: "8px",
-                margin: "8px 0",
-                backgroundColor: "#f0f9ff",
-                borderRadius: "8px",
-                textAlign: "center",
-              }}
-            >
-              <h4 style={{ marginTop: 0, color: "#0369a1", fontSize: "14px" }}>
-                ADJUSTMENT SUMMARY
-              </h4>
-              <p style={{ margin: "3px 0", fontSize: "12px" }}>
-                Previous Amount: ₹
-                {financialSummary.previousAmount.toLocaleString("en-IN")}
-              </p>
-              <p style={{ margin: "3px 0", fontSize: "12px" }}>
-                New Amount: ₹
-                {financialSummary.newAmount.toLocaleString("en-IN")}
-              </p>
-              <hr style={{ margin: "6px 0", borderColor: "#bae6fd" }} />
-              <p
-                style={{
-                  margin: "3px 0",
-                  fontSize: "14px",
-                  fontWeight: "bold",
-                }}
-              >
-                {financialSummary.difference > 0
-                  ? `Please Collect: ₹${financialSummary.difference.toLocaleString(
-                      "en-IN"
-                    )}`
-                  : `Please Return: ₹${Math.abs(
-                      financialSummary.difference
-                    ).toLocaleString("en-IN")}`}
-              </p>
-            </div>
-          )}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              backgroundColor: "#f9f9f9",
-              padding: "12px",
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              marginTop: "15px",
-              fontSize: "12px",
-            }}
-          >
-            <div>
-              <h3
-                style={{
-                  marginTop: 0,
-                  color: "#d32f2f",
-                  borderBottom: "1px solid #eee",
-                  paddingBottom: "5px",
-                  fontSize: "14px",
-                  marginBottom: "8px",
-                }}
-              >
-                Declaration
-              </h3>
-              <p style={{ margin: "0 0 5px 0" }}>
-                This receipt acknowledges the above donation received by{" "}
-                <strong>SDPJSS</strong>. We deeply appreciate your support towards
-                our cultural and welfare initiatives.
-              </p>
-            </div>
-          </div>
-          <div
-            style={{
-              textAlign: "center",
-              marginTop: "1px",
-              paddingTop: "1px",
-              borderTop: "1px solid #ccc",
-              fontSize: "10px",
-              color: "#777",
-            }}
-          >
-            <p>
-              This is an electronically generated document, hence does not require
-              signature.
-            </p>
-            <p style={{ fontStyle: "italic" }}>
-              Generated by <strong>{adminName}</strong> on {new Date().toLocaleString("en-IN")}. All dates and times are in accordance with {Intl.DateTimeFormat().resolvedOptions().timeZone} time zone.
-            </p>
-          </div>
-        </div>
-
-        <div style={{pageBreakAfter: "always", height: 0, visibility: 'hidden' }}></div>
-
-        <style>
-          {`@media print { body { -webkit-print-color-adjust: exact; } .bill-container { box-shadow: none !important; border: none !important;} }`}
-        </style>
-        <div
-          style={{
-            position: "absolute",
-            top: "55%",
-            left: "50%",
-            width: "60%",
-            height: "60%",
-            transform: "translate(-50%, -50%)",
-            backgroundImage:
-              "url(https://res.cloudinary.com/needlesscat/image/upload/v1754307740/logo_unr2rc.jpg)",
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "center center",
-            backgroundSize: "contain",
-            opacity: 0.08,
-            zIndex: 10,
-            pointerEvents: "none",
-          }}
-        />
-        <div
-          className="bill-container"
-          style={{
-            maxWidth: "800px",
-            margin: "auto",
-            border: "1px solid #ccc",
-            padding: "10px 20px",
-            boxShadow: "0 0 10px rgba(0,0,0,0.1)",
-            fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-            color: "#333",
-            position: "relative",
-            backgroundColor: "white",
-          }}
-        >
-          <div
-            className="header"
-            style={{
-              textAlign: "center",
-              borderBottom: "2px solid #d32f2f",
-              paddingBottom: "10px",
-              marginBottom: "10px",
-            }}
-          >
-            <div style={{ fontSize: "12px", display: "flex", justifyContent: "space-between",}}>
-              <span>
-                <b>Estd. 1939</b>
-              </span>
-              <span>
-                <b>Reg. No. 2020/272</b>
-              </span>
-            </div>
-            <div style={{fontSize: "24px", fontWeight: "bold", color: "#d32f2f", marginBottom: "1px",}}>
-              SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
-            </div>
-            <div style={{ marginBottom: "1px", fontSize: "14px" }}>
-              Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
-              823003
-            </div>
-            <div style={{ fontSize: "12px", color: "#444" }}>
-              <strong>PAN:</strong> ABBTS1301C | <strong>Contact:</strong> 0631
-              2952160, +91 9472030916 | <strong>Email:</strong>{" "}
-              sdpjssmanpur@gmail.com
-            </div>
-          </div>
-          <div style={{fontSize: "16px", fontWeight: 600, textAlign: "center", margin: "10px 0", letterSpacing: "1px",}}>
-            PRASAD TOKEN
-          </div>
-          <div style={{display: "flex", justifyContent: "space-between", marginBottom: "10px", fontSize: "12px",}}>
-            <div>
-              <strong>Token No:</strong> <span className= "font-mono" style={{padding: "3px 0 0 8px", fontWeight: "700", color: "#d32f2f",}}>{donationData.receiptId}</span>
-            </div>
-            <div>
-              <strong>Date:</strong>{" "}
-              {new Date(donationData.createdAt).toLocaleDateString(
-                "en-IN",
-                { year: "numeric", month: "long", day: "numeric", }
-              )}
-            </div>
-          </div>
-          <div style={{backgroundColor: "#f9f9f9", padding: "10px", border: "1px dashed #ddd", borderRadius: "8px", marginBottom: "12px",}}>
-            <h3 style={{marginTop: 0, color: "#d32f2f", borderBottom: "1px solid #eee", paddingBottom: "5px", fontSize: "14px", marginBottom: "8px",}}>
-              Recipient Details
-            </h3>
-            <table>
-              <tbody>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Name</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px" }}>{donationData.donorName} {donationData.relationship}</td>
-                </tr>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Address</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px" }}>
-                    {donationData.userType === 'guest'
-                      ? (
-                          <>
-                            ${guestData.address.street}, ${guestData.address.city}, ${guestData.address.state} - ${guestData.address.pin}
-                          </>
-                        )
-                      : donationData.postalAddress === "Will collect from Durga Sthan" || donationData.postalAddress === ""
-                        ? (
-                            <>
-                              {guestData.address?.room ? `Room-${guestData.address.room}, ` : ""}
-                              {guestData.address?.floor ? `Floor-${guestData.address.floor}, ` : ""}
-                              {guestData.address?.apartment ? `${guestData.address.apartment}, ` : ""}
-                              {guestData.address?.landmark ? `${guestData.address.landmark}, ` : ""}
-                              {guestData.address?.street ? `${guestData.address.street}, ` : ""}
-                              {guestData.address?.postoffice
-                                ? `PO: ${guestData.address.postoffice}, `
-                                : ""}
-                              {guestData.address?.city ? `${guestData.address.city}, ` : ""}
-                              {guestData.address?.district ? `${guestData.address.district}, ` : ""}
-                              {guestData.address?.state ? `${guestData.address.state}, ` : ""}
-                              {guestData.address?.country ? `${guestData.address.country} ` : ""}
-                              {guestData.address?.pin ? `- ${guestData.address.pin}` : ""}
-                            </>
-                          )
-                        : (
-                            donationData.postalAddress
-                          )
-                    }
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Mobile</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px" }}>
-                    {guestData.contact?.mobileno?.code}{"-"}{guestData.contact?.mobileno?.number}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{backgroundColor: "#f9f9f9", padding: "10px", border: "1px dashed #ddd", borderRadius: "8px", marginBottom: "12px",}}>
-            <h3 style={{marginTop: 0, color: "#d32f2f", borderBottom: "1px solid #eee", paddingBottom: "5px", fontSize: "14px", marginBottom: "8px",}}>
-              Mahaprasad Details
-            </h3>
-            <table>
-              <tbody>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Quantity</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px", fontWeight: "700", color: "#d32f2f", }}>
-                    {quantityToDisplay(totalWeightInGrams, totalPackets)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{backgroundColor: "#f9f9f9", padding: "10px", border: "1px dashed #ddd", borderRadius: "8px", marginBottom: "12px",}}>
-            <h3 style={{marginTop: 0, color: "#d32f2f", borderBottom: "1px solid #eee", paddingBottom: "5px", fontSize: "14px", marginBottom: "8px",}}>
-              Collection Details
-            </h3>
-            <table>
-              <tbody>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Date</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px", fontWeight: "700", color: "#d32f2f", }}>
-                    {import.meta.env.VITE_MAHA_PRASAD_COLLECTION_DATE}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Time</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px" }}>
-                    {import.meta.env.VITE_MAHA_PRASAD_COLLECTION_TIME}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ fontSize: "12px", padding: "2px 0" }}><strong>Location</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 2px" }}><strong>:</strong></td>
-                  <td style={{ fontSize: "12px", padding: "2px 10px" }}>
-                    {import.meta.env.VITE_MAHA_PRASAD_COLLECTION_LOCATION}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{backgroundColor: "#f9f9f9", padding: "10px", border: "1px dashed #ddd", borderRadius: "8px", marginBottom: "12px",}}>
-            <h3 style={{marginTop: 0, color: "#d32f2f", borderBottom: "1px solid #eee", paddingBottom: "5px", fontSize: "14px", marginBottom: "8px",}}>
-              Instructions
-            </h3>
-            <ul style={{paddingLeft: "16px", margin: 0, }}>
-              <li style={{fontSize: "12px", margin: "4px 0"}}>
-                <strong>#</strong> Please present this token to the volunteer at the Mahaprasad collection counter.
-              </li>
-              <li style={{fontSize: "12px", margin: "4px 0"}}>
-                <strong>#</strong> This token is valid for a single use only.
-              </li>
-              <li style={{fontSize: "12px", margin: "4px 0"}}>
-                <strong>#</strong> Please ensure you collect your items within the specified time to avoid any inconvenience.
-              </li>
-              <li style={{fontSize: "12px", margin: "4px 0"}}>
-                <strong>#</strong> Distribution schedules are subject to change; please follow community announcements for updates.
-              </li>
-            </ul>
-          </div>
-
-          <div style={{textAlign: "center", marginTop: "1px", paddingTop: "1px", borderTop: "1px solid #ccc", fontSize: "10px", color: "#777", }}>
-            <p>
-              This is an electronically generated document, hence does not require signature.
-            </p>
-            <p style={{ fontStyle: "italic" }}>
-              Generated by <strong>{adminName}</strong> on {new Date().toLocaleString("en-IN")}.
-            </p>
-          </div>
-        </div>
-
+      <div ref={ref} className="m-2" style={{ position: "relative" }}>
+        {documentType === "prasad-token" ? (
+          <PrasadTokenTemplate
+            receiptData={receiptData}
+            totalWeight={totalWeight}
+            totalPackets={totalPackets}
+          />
+        ) : (
+          <PublicDonationReceiptTemplate receiptData={receiptData} />
+        )}
       </div>
     );
   }
 );
-DonationReceiptTemplate.displayName = "DonationReceiptTemplate";
+PrintableDonationDocument.displayName = "PrintableDonationDocument";
 
 const ReceiptPreviewModal = ({
   donation,
   onClose,
-  adminName,
   onEdit
 }) => {
   const receiptRef = useRef(null);
+  const prasadTokenRef = useRef(null);
 
   const { totalWeight, totalPackets } = useMemo(() => {
     if (!donation || !donation.list) return { totalWeight: 0, totalPackets: 0 };
-    return donation.list.reduce(
+    const fallbackTotals = donation.list.reduce(
       (acc, d) => {
         acc.totalWeight += d.isPacket ? 0 : d.quantity;
         acc.totalPackets += d.isPacket ? d.quantity : 0;
@@ -926,9 +252,11 @@ const ReceiptPreviewModal = ({
       },
       { totalWeight: 0, totalPackets: 0 }
     );
+    return getSavedPrasadTotals(donation, fallbackTotals);
   }, [donation]);
 
   const finalTotalWeight = totalWeight;
+  const hasPrasadToken = totalWeight > 0 || totalPackets > 0;
 
   const { guestData, donationData } = useMemo(() => {
     const defaultAddress = {
@@ -990,6 +318,20 @@ const ReceiptPreviewModal = ({
     html2pdf().from(element).set(opt).save();
   };
 
+  const handleDownloadPrasadToken = () => {
+    const element = prasadTokenRef.current;
+    if (!element) return;
+
+    const opt = {
+      margin: 0,
+      filename: `prasad-token-${donation.receiptId}.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+    };
+    html2pdf().from(element).set(opt).save();
+  };
+
   const handlePrint = () => {
     const element = receiptRef.current;
     if (element) {
@@ -1000,7 +342,7 @@ const ReceiptPreviewModal = ({
           body { margin: 0; font-family: 'Segoe UI', sans-serif; background: white; }
           @media print {
             body { -webkit-print-color-adjust: exact; margin: 0; padding: 0; }
-            .bill-container { box-shadow: none !important; border: none !important; }
+            .bill-container { box-shadow: none !important; border: 1px solid #ccc !important; }
           }
         `,
       });
@@ -1046,22 +388,35 @@ const ReceiptPreviewModal = ({
         <div className="flex-1 p-6 overflow-y-auto bg-gradient-to-br from-gray-50 to-gray-100">
           <div className="bg-white rounded-xl shadow-lg p-4 mx-auto border border-gray-200">
             <div className="transform scale-90 origin-top mx-auto transition-transform duration-300 hover:scale-95">
-              <DonationReceiptTemplate
+              <PrintableDonationDocument
                 ref={receiptRef}
                 donationData={donationData}
                 guestData={guestData}
-                adminName={adminName}
-                financialSummary={donation.financialSummary}
                 totalWeight={totalWeight}
                 totalPackets={totalPackets}
                 courierCharge={courierCharge}
               />
             </div>
+            {hasPrasadToken && (
+              <div
+                style={{ position: "fixed", left: "-10000px", top: 0, width: "800px" }}
+              >
+                <PrintableDonationDocument
+                  ref={prasadTokenRef}
+                  donationData={donationData}
+                  guestData={guestData}
+                  totalWeight={totalWeight}
+                  totalPackets={totalPackets}
+                  courierCharge={courierCharge}
+                  documentType="prasad-token"
+                />
+              </div>
+            )}
           </div>
         </div>
 
         <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-gray-100 border-t border-gray-200">
-          <div className="flex justify-end items-center gap-3">
+          <div className="flex flex-wrap justify-end items-center gap-3">
             <button
               onClick={handleDownloadPDF}
               className="group flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transform hover:scale-105 transition-all duration-200 shadow-md hover:shadow-lg"
@@ -1079,8 +434,30 @@ const ReceiptPreviewModal = ({
                   d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                 />
               </svg>
-              Download PDF
+              Donation Receipt PDF
             </button>
+
+            {hasPrasadToken && (
+              <button
+                onClick={handleDownloadPrasadToken}
+                className="group flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-white font-medium rounded-lg hover:from-amber-600 hover:to-amber-700 transform hover:scale-105 transition-all duration-200 shadow-md hover:shadow-lg"
+              >
+                <svg
+                  className="w-4 h-4 group-hover:scale-110 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+                Prasad Token PDF
+              </button>
+            )}
 
             <button
               onClick={handlePrint}
@@ -1099,7 +476,7 @@ const ReceiptPreviewModal = ({
                   d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
                 />
               </svg>
-              Print
+              Print Donation Receipt
             </button>
 
             <button
@@ -1265,7 +642,7 @@ const PrintingPortal = () => {
             .map((d) => ({
               ...d,
               userType: d.donatedFor ? "child" : "registered",
-              relationName: d.relationName
+              relationship: d.relationName
                             ? `W/O ${d.relationName}`
                             : d.donatedFor
                               ? `${d.donatedFor.gender === 'female' ? "D/O" : "S/O"} ${d.userId.fullname}`
@@ -1280,7 +657,7 @@ const PrintingPortal = () => {
             .map((d) => ({
               ...d,
               userType: "guest",
-              relationName: `C/O ${d.userId.father}`,
+              relationship: `C/O ${d.userId.father}`,
               donorName: d.userId.fullname || "Guest",
             }))
         : [];
