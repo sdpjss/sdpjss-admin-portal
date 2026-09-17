@@ -10,78 +10,28 @@ import {
   Users,
   Trash2,
   Clock,
-  Scissors,
   AlertCircle,
+  Pencil,
+  Search,
 } from "lucide-react";
 import axios from "axios";
 import { AdminContext } from "../context/AdminContext";
 import html2pdf from "html2pdf.js";
 import { toast } from "react-toastify";
 import { printElements } from "../utils/printElements";
-
-// Helper function to convert number to Indian currency words (no changes here)
-const toWords = (num) => {
-  const ones = [
-    "",
-    "One",
-    "Two",
-    "Three",
-    "Four",
-    "Five",
-    "Six",
-    "Seven",
-    "Eight",
-    "Nine",
-    "Ten",
-    "Eleven",
-    "Twelve",
-    "Thirteen",
-    "Fourteen",
-    "Fifteen",
-    "Sixteen",
-    "Seventeen",
-    "Eighteen",
-    "Nineteen",
-  ];
-  const tens = [
-    "",
-    "",
-    "Twenty",
-    "Thirty",
-    "Forty",
-    "Fifty",
-    "Sixty",
-    "Seventy",
-    "Eighty",
-    "Ninety",
-  ];
-  const numToWords = (n) => {
-    let word = "";
-    if (n === 0) return word;
-    if (n < 20) {
-      word = ones[n];
-    } else {
-      word =
-        tens[Math.floor(n / 10)] + (n % 10 !== 0 ? " " + ones[n % 10] : "");
-    }
-    return word;
-  };
-  const number = Math.round(num);
-  if (number === 0) return "Zero Rupees Only";
-  if (number > 999999999) return "Number is too large";
-  let result = "";
-  const crore = Math.floor(number / 10000000);
-  const lakh = Math.floor((number % 10000000) / 100000);
-  const thousand = Math.floor((number % 100000) / 1000);
-  const hundred = Math.floor((number % 1000) / 100);
-  const rest = number % 100;
-  if (crore) result += numToWords(crore) + " Crore ";
-  if (lakh) result += numToWords(lakh) + " Lakh ";
-  if (thousand) result += numToWords(thousand) + " Thousand ";
-  if (hundred) result += numToWords(hundred) + " Hundred ";
-  if (rest) result += numToWords(rest);
-  return result.trim().replace(/\s+/g, " ") + " Rupees Only";
-};
+import DonationFulfillmentFields, {
+  emptyDeliveryAddress,
+  getDeliveryAddressError,
+} from "../components/DonationFulfillmentFields";
+import DonationReceiptTemplate from "../components/DonationReceiptTemplate";
+import PrasadTokenTemplate from "../components/PrasadTokenTemplate";
+import {
+  calculateCategoryV2Prasad,
+  categoryUsesMinimumAmount,
+  formatPrasadWeight,
+  getMinimumDonationAmount,
+  getSavedPrasadTotals,
+} from "../utils/prasadCalculation";
 
 // =================================================================
 // MODAL COMPONENT (*** UPDATED ***)
@@ -90,13 +40,13 @@ const ReceiptModal = ({
   data,
   isGroup,
   onClose,
-  courierCharge,
   adminName,
   totals,
   minDonationWeight, // UPDATED: Accept minDonationWeight prop
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const receiptRef = useRef(null);
+  const prasadTokenRef = useRef(null);
 
   // Esc key to close modal
   useEffect(() => {
@@ -113,13 +63,17 @@ const ReceiptModal = ({
   if (!currentReceipt) return null;
 
   const { donationData, guestData } = currentReceipt;
+  const currentCourierCharge = Number(donationData.courierCharge) || 0;
 
-  const currentTotals = isGroup
+  const fallbackTotals = isGroup
     ? totals.find((t) => t.receiptId === donationData.receiptId) || {
         totalWeight: 0,
         totalPackets: 0,
       }
     : totals;
+  const currentTotals = getSavedPrasadTotals(donationData, fallbackTotals);
+  const hasPrasadToken =
+    currentTotals.totalWeight > 0 || currentTotals.totalPackets > 0;
 
   const handleDownloadClick = (receiptNode, filename) => {
     const opt = {
@@ -139,6 +93,13 @@ const ReceiptModal = ({
     );
   };
 
+  const handleDownloadPrasadToken = () => {
+    handleDownloadClick(
+      prasadTokenRef.current,
+      `Prasad-Token-${donationData.receiptId}.pdf`
+    );
+  };
+
   const handlePrintCurrent = () => {
     if (receiptRef.current) {
       printElements({
@@ -148,7 +109,7 @@ const ReceiptModal = ({
           body { margin: 0; padding: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; }
           @media print {
             body { -webkit-print-color-adjust: exact; margin: 0; padding: 0; }
-            .bill-container { box-shadow: none !important; border: none !important; }
+            .bill-container { box-shadow: none !important; border: 1px solid #ccc !important; }
           }
         `,
       });
@@ -170,7 +131,7 @@ const ReceiptModal = ({
         body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         @media print {
           body { -webkit-print-color-adjust: exact; margin: 0; padding: 0; }
-          .bill-container { box-shadow: none !important; border: none !important; margin-top: 20px; }
+          .bill-container { box-shadow: none !important; border: 1px solid #ccc !important; margin-top: 20px; }
         }
       `,
     });
@@ -223,9 +184,13 @@ const ReceiptModal = ({
     <div style={{ position: "absolute", left: "-9999px", top: "-9999px" }}>
       {isGroup &&
         data.map((receipt, index) => {
-          const receiptTotals = totals.find(
+          const fallbackReceiptTotals = totals.find(
             (t) => t.receiptId === receipt.donationData.receiptId
           ) || { totalWeight: 0, totalPackets: 0 };
+          const receiptTotals = getSavedPrasadTotals(
+            receipt.donationData,
+            fallbackReceiptTotals
+          );
           return (
             <div
               id={`receipt-preview-${index}`}
@@ -234,12 +199,14 @@ const ReceiptModal = ({
               <ReceiptTemplate
                 donationData={receipt.donationData}
                 guestData={receipt.guestData}
-                courierCharge={courierCharge}
+                courierCharge={Number(receipt.donationData.courierCharge) || 0}
                 adminName={adminName}
                 totalWeight={receiptTotals.totalWeight}
                 totalPackets={receiptTotals.totalPackets}
                 totalAmount={donationData.amount}
-                minDonationWeight={minDonationWeight} // UPDATED: Pass prop
+                minDonationWeight={
+                  receiptTotals.minPrasadWeight ?? minDonationWeight
+                }
               />
             </div>
           );
@@ -297,8 +264,16 @@ const ReceiptModal = ({
                 className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
               >
                 <Download size={18} />{" "}
-                {isGroup ? "Download This" : "Download PDF"}
+                Donation Receipt PDF
               </button>
+              {hasPrasadToken && (
+                <button
+                  onClick={handleDownloadPrasadToken}
+                  className="flex items-center gap-2 bg-amber-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  <Download size={18} /> Prasad Token PDF
+                </button>
+              )}
               <button
                 onClick={onClose}
                 className="text-gray-500 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 rounded-full p-1"
@@ -332,13 +307,28 @@ const ReceiptModal = ({
               <ReceiptTemplate
                 donationData={donationData}
                 guestData={guestData}
-                courierCharge={courierCharge}
+                courierCharge={currentCourierCharge}
                 adminName={adminName}
                 totalWeight={currentTotals.totalWeight}
                 totalPackets={currentTotals.totalPackets}
-                minDonationWeight={minDonationWeight} // UPDATED: Pass prop
+                minDonationWeight={
+                  currentTotals.minPrasadWeight ?? minDonationWeight
+                }
               />
             </div>
+            {hasPrasadToken && (
+              <div
+                ref={prasadTokenRef}
+                style={{ position: "fixed", left: "-10000px", top: 0, width: "800px" }}
+              >
+                <PrasadTemplate
+                  donationData={donationData}
+                  guestData={guestData}
+                  totalWeight={currentTotals.totalWeight}
+                  totalPackets={currentTotals.totalPackets}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -346,755 +336,45 @@ const ReceiptModal = ({
   );
 };
 
-// =================================================================
-// RECEIPT TEMPLATE COMPONENT (*** UPDATED ***)
-// =================================================================
-const ReceiptTemplate = ({
-  donationData,
-  guestData,
-  courierCharge = 0,
-  adminName,
-  totalWeight,
-  totalPackets,
-  minDonationWeight = 0, // UPDATED: Accept minDonationWeight prop
-}) => {
-  const finalTotalAmount = donationData.amount + courierCharge;
+const ReceiptTemplate = ({ donationData, guestData, courierCharge = 0 }) => {
+  if (!donationData || !guestData) return null;
 
-  // UPDATED: Calculate weight difference and final displayed weight for the slip
-  const weightDifference =
-    minDonationWeight > totalWeight ? minDonationWeight - totalWeight : 0;
-  const finalSlipWeight = totalWeight + weightDifference;
-
-  const headerCellStyle = {
-    padding: "8px",
-    textAlign: "left",
-    borderBottom: "1px solid #eee",
-    backgroundColor: "#f2f2f2",
-    fontWeight: 600,
-    fontSize: "12px",
+  const donation = {
+    ...donationData,
+    amount:
+      Number(donationData.amount || 0) + Number(courierCharge || 0),
   };
-  const bodyCellStyle = {
-    padding: "8px",
-    textAlign: "left",
-    borderBottom: "1px solid #eee",
-    fontSize: "12px",
+  const user = {
+    ...guestData,
+    fatherName: guestData.fatherName || guestData.father || "",
   };
-  const bodyCellRightAlign = { ...bodyCellStyle, textAlign: "right" };
 
   return (
-    <>
-      <style>
-        {`@media print { body { -webkit-print-color-adjust: exact; } .bill-container { box-shadow: none !important; border: none !important;} }`}
-      </style>
-      <div
-        style={{
-          position: "absolute",
-          top: "35%",
-          left: "50%",
-          width: "60%",
-          height: "60%",
-          transform: "translate(-50%, -50%)",
-          backgroundImage:
-            "url(https://res.cloudinary.com/needlesscat/image/upload/v1754307740/logo_unr2rc.jpg)",
-          backgroundRepeat: "no-repeat",
-          backgroundPosition: "center center",
-          backgroundSize: "contain",
-          opacity: 0.08,
-          zIndex: 10,
-          pointerEvents: "none",
-        }}
-      ></div>
-      <div
-        className="bill-container"
-        style={{
-          maxWidth: "800px",
-          margin: "auto",
-          border: "1px solid #ccc",
-          padding: "10px 20px",
-          boxShadow: "0 0 10px rgba(0,0,0,0.1)",
-          fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-          color: "#333",
-          position: "relative",
-          backgroundColor: "white", // Important for print
-        }}
-      >
-        <div
-          className="header"
-          style={{
-            textAlign: "center",
-            borderBottom: "2px solid #d32f2f",
-            paddingBottom: "10px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "12px",
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>
-              <b>Estd. 1939</b>
-            </span>
-            <span>
-              <b>Reg. No. 2020/272</b>
-            </span>
-          </div>
-          <div
-            style={{
-              fontSize: "24px",
-              fontWeight: "bold",
-              color: "#d32f2f",
-              marginBottom: "1px",
-            }}
-          >
-            SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
-          </div>
-          <div
-            style={{ color: "#15803d", fontSize: "12px", fontWeight: 600 }}
-          >
-            (Registered under Indian Trust Act - 1882)
-          </div>
-          <div style={{ marginBottom: "1px", fontSize: "14px" }}>
-            Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
-            823003
-          </div>
-          <div style={{ fontSize: "12px", color: "#444" }}>
-            <strong>PAN:</strong> ABBTS1301C | <strong>Contact:</strong> 0631
-            2952160, +91 9472030916 | <strong>Email:</strong>{" "}
-            sdpjssmanpur@gmail.com
-          </div>
-        </div>
-        <div
-          style={{
-            fontSize: "16px",
-            fontWeight: 600,
-            textAlign: "center",
-            margin: "5px 0",
-            letterSpacing: "1px",
-          }}
-        >
-          DONATION RECEIPT
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "8px",
-            fontSize: "12px",
-          }}
-        >
-          <div>
-            <strong>Receipt No:</strong> {donationData.receiptId}
-          </div>
-          <div>
-            <strong>Date:</strong>{" "}
-            {new Date(donationData.createdAt).toLocaleDateString("en-IN", {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })}
-          </div>
-        </div>
-        <div
-          style={{
-            backgroundColor: "#f9f9f9",
-            padding: "8px",
-            border: "1px dashed #ddd",
-            borderRadius: "8px",
-            marginBottom: "8px",
-          }}
-        >
-          <h3
-            style={{
-              marginTop: 0,
-              color: "#d32f2f",
-              borderBottom: "1px solid #eee",
-              paddingBottom: "3px",
-              fontSize: "14px",
-              marginBottom: "6px",
-            }}
-          >
-            Donor Details
-          </h3>
-          <div style={{ display: "flex", gap: "20px" }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: "12px", margin: "2px 0" }}>
-                <strong>Name:</strong> {guestData.fullname} S/O{" "}
-                {guestData.father}
-              </p>
-              <p style={{ fontSize: "12px", margin: "2px 0" }}>
-                <strong>Mobile:</strong> {guestData.contact.mobileno.code}{" "}
-                {guestData.contact.mobileno.number}
-              </p>
-            </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: "12px", margin: "2px 0" }}>
-                <strong>Address:</strong> {guestData.address.street},{" "}
-                {guestData.address.city}, {guestData.address.state} -{" "}
-                {guestData.address.pin}
-              </p>
-            </div>
-          </div>
-        </div>
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            marginBottom: "8px",
-          }}
-        >
-          <thead>
-            <tr>
-              {["Item", "Quantity", "Amount (₹)", "Weight (g)", "Packet"].map(
-                (header) => (
-                  <th
-                    key={header}
-                    style={{
-                      ...headerCellStyle,
-                      textAlign: [
-                        "Quantity",
-                        "Amount (₹)",
-                        "Weight (g)",
-                        "Packet",
-                      ].includes(header)
-                        ? "right"
-                        : "left",
-                    }}
-                  >
-                    {header}
-                  </th>
-                )
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {donationData.list.map((item, index) => (
-              <tr key={index}>
-                <td style={bodyCellStyle}>{item.category}</td>
-                <td style={bodyCellRightAlign}>
-                  {item.number.toLocaleString("en-IN")}
-                </td>
-                <td style={bodyCellRightAlign}>
-                  ₹{item.amount.toLocaleString("en-IN")}
-                </td>
-                <td style={bodyCellRightAlign}>
-                  {item.quantity.toLocaleString("en-IN")}
-                </td>
-                <td style={bodyCellRightAlign}>
-                  {item.isPacket ? "Yes" : "No"}
-                </td>
-              </tr>
-            ))}
-            {
-              <tr>
-                <td
-                  colSpan={2}
-                  style={{
-                    ...bodyCellStyle,
-                    borderTop: "2px solid #ddd",
-                    fontWeight: "bold",
-                  }}
-                >
-                  Courier Charges
-                </td>
-                <td
-                  style={{
-                    ...bodyCellRightAlign,
-                    borderTop: "2px solid #ddd",
-                    fontWeight: "bold",
-                  }}
-                >
-                  ₹{courierCharge.toLocaleString("en-IN")}
-                </td>
-                <td
-                  colSpan={2}
-                  style={{ ...bodyCellStyle, borderTop: "2px solid #ddd" }}
-                ></td>
-              </tr>
-            }
-            <tr
-              style={{
-                fontWeight: "bold",
-                fontSize: "12px",
-                backgroundColor: "#f2f2f2",
-              }}
-            >
-              <td
-                colSpan={2}
-                style={{
-                  padding: "10px 8px",
-                  textAlign: "left",
-                  borderTop: "2px solid #ddd",
-                }}
-              >
-                TOTAL AMOUNT
-              </td>
-              <td
-                style={{
-                  ...bodyCellRightAlign,
-                  padding: "10px 8px",
-                  borderTop: "2px solid #ddd",
-                }}
-              >
-                ₹{finalTotalAmount.toLocaleString("en-IN")}
-              </td>
-              <td
-                colSpan={2}
-                style={{ padding: "10px 8px", borderTop: "2px solid #ddd" }}
-              ></td>
-            </tr>
-          </tbody>
-        </table>
-
-        {/* --- UPDATED: Conditionally show weight adjustment note --- */}
-        {weightDifference > 0 && (
-          <div
-            style={{
-              padding: "6px",
-              backgroundColor: "#fffbe6",
-              border: "1px solid #ffe58f",
-              marginTop: "8px",
-              fontSize: "11px",
-              color: "#8a6d3b",
-              borderRadius: "4px",
-              textAlign: "center",
-            }}
-          >
-            <b>
-              **Additional +{Math.round(weightDifference)}g is added to meet the
-              minimum halwa as prasad to the donor.**
-            </b>
-          </div>
-        )}
-        {/* --- END UPDATE --- */}
-
-        <div
-          style={{
-            padding: "6px",
-            backgroundColor: "#f9f9f9",
-            borderLeft: "4px solid #d32f2f",
-            marginTop: "8px",
-            fontWeight: "bold",
-            fontSize: "12px",
-          }}
-        >
-          Amount in Words: {toWords(finalTotalAmount)}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            backgroundColor: "#f9f9f9",
-            padding: "8px",
-            border: "1px solid #ddd",
-            borderRadius: "8px",
-            marginTop: "8px",
-            fontSize: "12px",
-          }}
-        >
-          <div>
-            <p style={{ margin: "0 0 3px 0" }}>
-              <strong>Payment Method:</strong> {donationData.method}
-            </p>
-            <p style={{ margin: "0" }}>
-              <strong>Transaction ID:</strong>{" "}
-              {donationData.transactionId || "N/A"}
-            </p>
-          </div>
-          <div
-            style={{
-              backgroundColor: "#077e13ff",
-              color: "white",
-              padding: "6px 12px",
-              borderRadius: "4px",
-              fontWeight: "bold",
-              border: "1px solid #044202ff",
-              fontSize: "14px",
-            }}
-          >
-            PAID
-          </div>
-        </div>
-
-        <div
-          style={{
-            textAlign: "center",
-            marginTop: "15px",
-            paddingTop: "6px",
-            borderTop: "1px solid #ccc",
-            fontSize: "10px",
-            color: "#777",
-          }}
-        >
-          <p>
-            Thank you for your generous contribution. This is a
-            computer-generated receipt.
-          </p>
-          <p style={{ marginTop: "2px", fontStyle: "italic" }}>
-            Generated by: <strong>{adminName}</strong> on{" "}
-            {new Date().toLocaleString("en-IN")}
-          </p>
-        </div>
-      </div>
-
-      {/* --- TEAR-OFF SLIP START --- */}
-      <div
-        style={{
-          marginTop: "8px",
-          position: "relative",
-          borderTop: "2px dashed #333",
-        }}
-      >
-        <Scissors
-          size={18}
-          style={{
-            position: "absolute",
-            top: "-12px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            backgroundColor: "white",
-            padding: "0 5px",
-          }}
-        />
-
-        {/* Watermark background */}
-        <div
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            width: "40%",
-            height: "60%",
-            transform: "translate(-50%, -40%)",
-            backgroundImage:
-              "url(https://res.cloudinary.com/needlesscat/image/upload/v1754307740/logo_unr2rc.jpg)",
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "center center",
-            backgroundSize: "contain",
-            opacity: 0.06,
-            zIndex: 10,
-            pointerEvents: "none",
-          }}
-        ></div>
-
-        {/* Main slip container */}
-        <div
-          style={{
-            maxWidth: "800px",
-            margin: "auto",
-            marginTop: "8px",
-            border: "2px solid #d32f2f",
-            borderRadius: "8px",
-            padding: "10px 20px",
-            backgroundColor: "#fefefe",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-            color: "#333",
-            position: "relative",
-            zIndex: 2,
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              textAlign: "center",
-              marginBottom: "10px",
-              borderBottom: "1px solid #e0e0e0",
-              paddingBottom: "6px",
-            }}
-          >
-            <h4
-              style={{
-                margin: "0",
-                fontSize: "14px",
-                fontWeight: "700",
-                color: "#d32f2f",
-                letterSpacing: "1px",
-                textTransform: "uppercase",
-              }}
-            >
-              Donation Summary Slip
-            </h4>
-            <div
-              style={{
-                fontSize: "12px",
-                color: "#666",
-                marginTop: "2px",
-                fontStyle: "italic",
-              }}
-            >
-              Keep this slip for your records
-            </div>
-          </div>
-
-          {/* Main content area */}
-          <div
-            style={{
-              display: "flex",
-              gap: "20px",
-              alignItems: "flex-start",
-            }}
-          >
-            {/* Left side - Donor Information */}
-            <div
-              style={{
-                flex: "1",
-                backgroundColor: "#f8f9ff",
-                padding: "8px",
-                borderRadius: "6px",
-                border: "1px solid #e8e8ff",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  color: "#4a4a9a",
-                  marginBottom: "6px",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.5px",
-                }}
-              >
-                Donor Details
-              </div>
-              <table
-                style={{
-                  width: "100%",
-                  fontSize: "12px",
-                  borderCollapse: "collapse",
-                }}
-              >
-                <tbody>
-                  <tr>
-                    <td
-                      style={{
-                        padding: "2px 0",
-                        fontWeight: "600",
-                        color: "#555",
-                        width: "70px",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      Receipt No:
-                    </td>
-                    <td
-                      style={{
-                        padding: "2px 0 0 8px",
-                        fontWeight: "700",
-                        color: "#d32f2f",
-                      }}
-                    >
-                      {donationData.receiptId}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td
-                      style={{
-                        padding: "2px 0",
-                        fontWeight: "600",
-                        color: "#555",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      Name:
-                    </td>
-                    <td style={{ padding: "2px 0 0 8px", color: "#333" }}>
-                      {guestData.fullname} {guestData.gender === "female" ? "D/O" : "S/O"} {guestData.father}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td
-                      style={{
-                        padding: "2px 0",
-                        fontWeight: "600",
-                        color: "#555",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      Location:
-                    </td>
-                    <td style={{ padding: "2px 0 0 8px", color: "#333" }}>
-                      {guestData.address.city}, {guestData.address.state}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td
-                      style={{
-                        padding: "2px 0",
-                        fontWeight: "600",
-                        color: "#555",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      Mobile:
-                    </td>
-                    <td style={{ padding: "2px 0 0 8px", color: "#333" }}>
-                      {guestData.contact.mobileno.number}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            {/* Right side - Summary Totals */}
-            <div
-              style={{
-                flex: "0 0 180px",
-                backgroundColor: "#f0f8f0",
-                padding: "5px",
-                borderRadius: "6px",
-                border: "2px solid #d4edda",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  color: "#155724",
-                  marginBottom: "8px",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.5px",
-                  textAlign: "center",
-                }}
-              >
-                Summary Totals
-              </div>
-
-              <div style={{ marginBottom: "4px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "0px 8px 4px 8px",
-                    backgroundColor: "white",
-                    borderRadius: "4px",
-                    marginBottom: "2px",
-                    border: "1px solid #e8f5e8",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: "600",
-                      color: "#555",
-                    }}
-                  >
-                    Weights(g):
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: "700",
-                      color: "#155724",
-                      backgroundColor: "#d4edda",
-                      marginTop: "4px",
-                      padding: "0px 8px 4px 8px",
-                      borderRadius: "3px",
-                    }}
-                  >
-                    {/* --- UPDATED: Use final adjusted weight --- */}
-                    {finalSlipWeight?.toLocaleString("en-IN")}
-                  </span>
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "0px 8px 4px 8px",
-                    backgroundColor: "white",
-                    borderRadius: "4px",
-                    marginBottom: "2px",
-                    border: "1px solid #e8f5e8",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: "600",
-                      color: "#555",
-                    }}
-                  >
-                    Packets:
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: "700",
-                      color: "#155724",
-                      backgroundColor: "#d4edda",
-                      marginTop: "4px",
-                      padding: "0px 8px 4px 8px",
-                      borderRadius: "3px",
-                    }}
-                  >
-                    {totalPackets?.toLocaleString("en-IN")}
-                  </span>
-                </div>
-              </div>
-
-              {/* Total Amount - Highlighted */}
-              <div
-                style={{
-                  backgroundColor: "#d32f2f",
-                  color: "white",
-                  padding: "2px 8px",
-                  borderRadius: "6px",
-                  textAlign: "center",
-                  border: "2px solid #b71c1c",
-                  boxShadow: "0 2px 4px rgba(211,47,47,0.3)",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: "600",
-                    marginBottom: "2px",
-                    opacity: 0.9,
-                  }}
-                >
-                  TOTAL AMOUNT:{" "}
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: "600",
-                      letterSpacing: "0.5px",
-                    }}
-                  >
-                    ₹{finalTotalAmount.toLocaleString("en-IN")}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div
-            style={{
-              marginTop: "8px",
-              paddingTop: "6px",
-              borderTop: "1px solid #e0e0e0",
-              textAlign: "center",
-              fontSize: "8px",
-              color: "#888",
-              fontStyle: "italic",
-            }}
-          >
-            Generated by {adminName} on {new Date().toLocaleDateString("en-IN")}{" "}
-            • Thank you for your donation
-          </div>
-        </div>
-      </div>
-      {/* --- TEAR-OFF SLIP END --- */}
-    </>
+    <div style={{ position: "relative" }}>
+      <DonationReceiptTemplate receiptData={{ donation, user }} />
+    </div>
   );
 };
+
+const PrasadTemplate = ({ donationData, guestData, totalWeight, totalPackets }) => {
+  if (!donationData || !guestData) return null;
+
+  const user = {
+    ...guestData,
+    fatherName: guestData.fatherName || guestData.father || "",
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <PrasadTokenTemplate
+        receiptData={{ donation: donationData, user }}
+        totalWeight={totalWeight}
+        totalPackets={totalPackets}
+      />
+    </div>
+  );
+};
+
 // =================================================================
 // PREVIOUS DONATIONS COMPONENT (No changes here)
 // =================================================================
@@ -1212,8 +492,19 @@ const GuestReceipt = () => {
   const [quantity, setQuantity] = useState(1);
   const [dynamicAmount, setDynamicAmount] = useState("");
   const [donations, setDonations] = useState([]);
+  const [editingDonationId, setEditingDonationId] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
-  const [selectedPrasadType, setSelectedPrasadType] = useState("halwa");
+  const [fulfillmentMode, setFulfillmentMode] = useState("");
+  const [selectedPrasadType, setSelectedPrasadType] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState({
+    ...emptyDeliveryAddress,
+  });
+  const [courierCharges, setCourierCharges] = useState([]);
+  const [minimumCourierDonationAmount, setMinimumCourierDonationAmount] =
+    useState(1210);
+  const [prasadRate, setPrasadRate] = useState(null);
+  const [pratimaAmount, setPratimaAmount] = useState("");
+  const [pratimaQuantity, setPratimaQuantity] = useState(1);
   const [remarks, setRemarks] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [minDonationWeight, setMinDonationWeight] = useState(0); // UPDATED: State for min weight
@@ -1222,8 +513,6 @@ const GuestReceipt = () => {
   const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const categorySearchRef = useRef(null);
   const donorSearchRef = useRef(null);
-
-  const courierCharge = 0;
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -1255,6 +544,34 @@ const GuestReceipt = () => {
       }
     };
     fetchCategories();
+  }, [aToken, backendUrl]);
+
+  useEffect(() => {
+    const fetchFulfillmentConfiguration = async () => {
+      if (!aToken) return;
+      try {
+        const [courierResponse, rateResponse] = await Promise.all([
+          axios.get(`${backendUrl}/api/admin/courier-charges`, {
+            headers: { aToken },
+          }),
+          axios.get(`${backendUrl}/api/admin/prasad-rate`, {
+            headers: { aToken },
+          }),
+        ]);
+        if (courierResponse.data.success) {
+          setCourierCharges(courierResponse.data.courierCharges || []);
+        }
+        if (rateResponse.data.success && rateResponse.data.rate) {
+          setPrasadRate(rateResponse.data.rate);
+          setMinimumCourierDonationAmount(
+            Number(rateResponse.data.rate.minimumCourierDonationAmount) || 0
+          );
+        }
+      } catch (error) {
+        console.error("Error fetching fulfilment configuration:", error);
+      }
+    };
+    fetchFulfillmentConfiguration();
   }, [aToken, backendUrl]);
 
   useEffect(() => {
@@ -1308,16 +625,22 @@ const GuestReceipt = () => {
   }, [showDropdown, searchResults, highlightedIndex]);
 
   const availableCategories = useMemo(() => {
-    const donatedCategoryNames = donations.map((d) => d.category);
+    const donatedCategoryNames = donations
+      .filter((donation) => donation.id !== editingDonationId)
+      .map((donation) => donation.category);
     const filtered = allCategories.filter(
       (cat) =>
         !donatedCategoryNames.includes(cat.categoryName) &&
+        cat.isActive !== false &&
+        cat.showInRegularDonation !== false &&
+        cat.categoryCode !== "maa_durga_pratima" &&
+        (!cat.availableFor?.length || cat.availableFor.includes("self")) &&
         cat.categoryName
           .toLowerCase()
           .includes(categorySearchQuery.toLowerCase())
     );
     return filtered;
-  }, [allCategories, donations, categorySearchQuery]);
+  }, [allCategories, donations, categorySearchQuery, editingDonationId]);
 
   useEffect(() => {
     if (!isCategoryDropdownOpen) return;
@@ -1371,20 +694,72 @@ const GuestReceipt = () => {
         item.allowGramAlternativeForInPerson)
   );
   const hasPacketCollectionOption = donations.some(
-    (item) => item.prasadType === "packet"
+    (item) =>
+      item.prasadType === "packet" ||
+      item.isPacket ||
+      item.category?.toLowerCase().includes("professional")
   );
+  const prasadEligibleDonationAmount = donations.reduce(
+    (sum, donation) =>
+      donation.prasadType === "none" ? sum : sum + donation.amount,
+    0
+  );
+  const isCourierDonationEligible =
+    prasadEligibleDonationAmount >= minimumCourierDonationAmount;
+  const hasPrasadEligibleDonation = prasadEligibleDonationAmount > 0;
+  const effectiveHasGramCollectionOption = usesOnlyCategoryV2
+    ? hasGramCollectionOption
+    : prasadEligibleDonationAmount > 0;
+  const effectiveHasPacketCollectionOption = hasPacketCollectionOption;
+  const categoryV2PrasadPreview = calculateCategoryV2Prasad(
+    donations,
+    prasadRate,
+    fulfillmentMode,
+    selectedPrasadType
+  );
+  const courierCharge =
+    fulfillmentMode === "courier"
+      ? courierCharges.find(
+          (charge) => charge.region === deliveryAddress.currlocation
+        )?.amount || 0
+      : 0;
 
   useEffect(() => {
-    if (!usesOnlyCategoryV2) return;
-    if (hasGramCollectionOption && !hasPacketCollectionOption) {
-      setSelectedPrasadType("halwa");
-    } else if (hasPacketCollectionOption && !hasGramCollectionOption) {
-      setSelectedPrasadType("packet");
+    if (!hasPrasadEligibleDonation) {
+      setFulfillmentMode("");
+      setDeliveryAddress({ ...emptyDeliveryAddress });
+    } else if (!isCourierDonationEligible) {
+      setFulfillmentMode("collection");
+      setDeliveryAddress({ ...emptyDeliveryAddress });
+    } else {
+      setFulfillmentMode((current) =>
+        current === "courier" ? current : ""
+      );
     }
   }, [
-    hasGramCollectionOption,
-    hasPacketCollectionOption,
-    usesOnlyCategoryV2,
+    hasPrasadEligibleDonation,
+    isCourierDonationEligible,
+  ]);
+
+  useEffect(() => {
+    setSelectedPrasadType((current) => {
+      if (!hasPrasadEligibleDonation || fulfillmentMode !== "collection") {
+        return "";
+      }
+      if (
+        effectiveHasGramCollectionOption &&
+        !effectiveHasPacketCollectionOption
+      ) {
+        return "halwa";
+      }
+      if (effectiveHasPacketCollectionOption) return "";
+      return current;
+    });
+  }, [
+    effectiveHasGramCollectionOption,
+    effectiveHasPacketCollectionOption,
+    fulfillmentMode,
+    hasPrasadEligibleDonation,
   ]);
 
   // UPDATED: Calculate final displayed weight and difference for UI feedback
@@ -1395,7 +770,7 @@ const GuestReceipt = () => {
   const finalDisplayedWeight = totalWeight + weightDifference;
 
   const calculatedAmountForStandard =
-    selectedCategoryDetails && !selectedCategoryDetails.dynamic?.isDynamic
+    selectedCategoryDetails && !categoryUsesMinimumAmount(selectedCategoryDetails)
       ? selectedCategoryDetails.rate * (Number(quantity) || 0)
       : 0;
 
@@ -1472,8 +847,8 @@ const GuestReceipt = () => {
     setCategorySearchQuery(category.categoryName);
     setIsCategoryDropdownOpen(false);
     setHighlightedIndex(-1);
-    if (category?.dynamic?.isDynamic) {
-      setDynamicAmount(category.rate.toString());
+    if (categoryUsesMinimumAmount(category)) {
+      setDynamicAmount("");
       setQuantity(1);
     } else {
       setDynamicAmount("");
@@ -1486,7 +861,7 @@ const GuestReceipt = () => {
       toast.warn("Please select a category.");
       return;
     }
-    const isDynamic = selectedCategoryDetails.dynamic?.isDynamic;
+    const isDynamic = categoryUsesMinimumAmount(selectedCategoryDetails);
     let newDonation;
     if (isDynamic) {
       const amount = Number(dynamicAmount) || 0;
@@ -1513,16 +888,17 @@ const GuestReceipt = () => {
         return;
       }
       let weight = 0;
-      if (amount < selectedCategoryDetails.rate) {
-        weight = selectedCategoryDetails.dynamic.minvalue;
-      } else {
+      if (selectedCategoryDetails.configurationVersion !== "category-v2") {
         weight =
-          Math.floor(amount / selectedCategoryDetails.rate) *
-          selectedCategoryDetails.weight;
+          amount < selectedCategoryDetails.rate
+            ? selectedCategoryDetails.dynamic.minvalue
+            : Math.floor(amount / selectedCategoryDetails.rate) *
+              selectedCategoryDetails.weight;
       }
       newDonation = {
-        id: Date.now(),
+        id: editingDonationId || Date.now(),
         category: selectedCategoryDetails.categoryName,
+        categoryCode: selectedCategoryDetails.categoryCode,
         number: donationQuantity,
         amount: amount,
         isPacket: false,
@@ -1553,12 +929,19 @@ const GuestReceipt = () => {
       const calculatedAmount =
         selectedCategoryDetails.rate * parseInt(quantity, 10);
       newDonation = {
-        id: Date.now(),
+        id: editingDonationId || Date.now(),
         category: selectedCategoryDetails.categoryName,
+        categoryCode: selectedCategoryDetails.categoryCode,
         number: parseInt(quantity, 10),
         amount: calculatedAmount,
-        isPacket: selectedCategoryDetails.packet,
-        quantity: selectedCategoryDetails.weight * parseInt(quantity, 10),
+        isPacket:
+          selectedCategoryDetails.configurationVersion === "category-v2"
+            ? false
+            : selectedCategoryDetails.packet,
+        quantity:
+          selectedCategoryDetails.configurationVersion === "category-v2"
+            ? 0
+            : selectedCategoryDetails.weight * parseInt(quantity, 10),
         prasadType:
           selectedCategoryDetails.configurationVersion === "category-v2"
             ? selectedCategoryDetails.prasadType
@@ -1578,7 +961,14 @@ const GuestReceipt = () => {
         configurationVersion: selectedCategoryDetails.configurationVersion,
       };
     }
-    setDonations([...donations, newDonation]);
+    setDonations((current) =>
+      editingDonationId
+        ? current.map((donation) =>
+            donation.id === editingDonationId ? newDonation : donation
+          )
+        : [...current, newDonation]
+    );
+    setEditingDonationId(null);
     setSelectedCategoryId("");
     setSelectedCategoryDetails(null);
     setQuantity(1);
@@ -1588,6 +978,94 @@ const GuestReceipt = () => {
 
   const removeDonation = (id) => {
     setDonations(donations.filter((d) => d.id !== id));
+    if (editingDonationId === id) setEditingDonationId(null);
+  };
+
+  const handleEditDonation = (donation) => {
+    if (donation.categoryCode === "maa_durga_pratima") {
+      setPratimaQuantity(donation.number);
+      setPratimaAmount(String(donation.amount));
+      toast.info("Pratima contribution loaded for editing");
+      return;
+    }
+    const category = allCategories.find(
+      (item) => item.categoryName === donation.category
+    );
+    if (!category) return toast.error("Donation category is no longer available");
+    setEditingDonationId(donation.id);
+    setSelectedCategoryId(category._id);
+    setSelectedCategoryDetails(category);
+    setCategorySearchQuery(category.categoryName);
+    setQuantity(donation.number);
+    setDynamicAmount(
+      categoryUsesMinimumAmount(category) ? String(donation.amount) : ""
+    );
+    setIsCategoryDropdownOpen(false);
+    toast.info("Donation item loaded for editing");
+  };
+
+  const pratimaCategory = allCategories.find(
+    (category) =>
+      category.categoryCode === "maa_durga_pratima" &&
+      category.isActive !== false &&
+      (!category.availableFor?.length || category.availableFor.includes("self"))
+  );
+
+  const handlePratimaContribution = () => {
+    if (!pratimaCategory) return;
+    const units = pratimaCategory.minimumAmountPerUnit
+      ? Number(pratimaQuantity)
+      : 1;
+    const amount = Number(pratimaAmount);
+    const minimumAmount = Number(pratimaCategory.rate) * units;
+    if (!Number.isInteger(units) || units < 1) {
+      return toast.error("Enter a valid Pratima quantity");
+    }
+    const usesMinimumAmount = categoryUsesMinimumAmount(pratimaCategory);
+    if (
+      !Number.isFinite(amount) ||
+      (usesMinimumAmount
+        ? amount < minimumAmount
+        : Math.abs(amount - minimumAmount) > 0.01)
+    ) {
+      return toast.error(
+        usesMinimumAmount
+          ? `Maa Durga Pratima contribution must be at least ₹${minimumAmount.toLocaleString("en-IN")}`
+          : `Maa Durga Pratima contribution must be ₹${minimumAmount.toLocaleString("en-IN")}`
+      );
+    }
+    const item = {
+      id:
+        donations.find(
+          (donation) => donation.categoryCode === "maa_durga_pratima"
+        )?.id || Date.now(),
+      category: pratimaCategory.categoryName,
+      categoryCode: pratimaCategory.categoryCode,
+      number: units,
+      amount,
+      isPacket: false,
+      quantity: 0,
+      prasadType: "none",
+      allowGramAlternativeForInPerson: false,
+      packetsPerUnit: 0,
+      configurationVersion: pratimaCategory.configurationVersion,
+    };
+    setDonations((current) => [
+      ...current.filter(
+        (donation) => donation.categoryCode !== "maa_durga_pratima"
+      ),
+      item,
+    ]);
+  };
+
+  const removePratimaContribution = () => {
+    setDonations((current) =>
+      current.filter(
+        (donation) => donation.categoryCode !== "maa_durga_pratima"
+      )
+    );
+    setPratimaAmount("");
+    setPratimaQuantity(1);
   };
 
   const resetForm = () => {
@@ -1606,8 +1084,13 @@ const GuestReceipt = () => {
       },
     });
     setDonations([]);
+    setEditingDonationId(null);
     setPaymentMethod("Cash");
-    setSelectedPrasadType("halwa");
+    setFulfillmentMode("");
+    setSelectedPrasadType("");
+    setDeliveryAddress({ ...emptyDeliveryAddress });
+    setPratimaAmount("");
+    setPratimaQuantity(1);
     setRemarks("");
     setSelectedCategoryId("");
     setQuantity(1);
@@ -1634,8 +1117,41 @@ const GuestReceipt = () => {
         isValid = false;
       }
     }
+    if (
+      prasadEligibleDonationAmount > 0 &&
+      !["collection", "courier"].includes(fulfillmentMode)
+    ) {
+      toast.error("Please select a Mahaprasad fulfilment mode.");
+      isValid = false;
+    }
+    if (
+      prasadEligibleDonationAmount > 0 &&
+      fulfillmentMode === "collection" &&
+      !selectedPrasadType
+    ) {
+      toast.error("Please select the Mahaprasad type.");
+      isValid = false;
+    }
+    if (fulfillmentMode === "courier") {
+      if (!isCourierDonationEligible) {
+        toast.error("This donation is not eligible for courier delivery.");
+        isValid = false;
+      }
+      const addressError = getDeliveryAddressError(deliveryAddress);
+      if (addressError) {
+        toast.error(addressError);
+        isValid = false;
+      }
+    }
     return isValid;
   };
+
+  const mahaprasadFulfillment =
+    prasadEligibleDonationAmount <= 0
+      ? { mode: "none", type: "none" }
+      : fulfillmentMode === "courier"
+        ? { mode: "courier", type: "packet" }
+        : { mode: "collection", type: selectedPrasadType };
 
   const handleSubmit = async () => {
     if (!validateForm()) return;
@@ -1644,10 +1160,12 @@ const GuestReceipt = () => {
       list: donations.map(({ id: _id, ...rest }) => rest),
       method: paymentMethod,
       remarks,
-      mahaprasadFulfillment: {
-        mode: "collection",
-        type: selectedPrasadType,
-      },
+      courierCharge,
+      deliveryAddress:
+        mahaprasadFulfillment.mode === "courier"
+          ? deliveryAddress
+          : undefined,
+      mahaprasadFulfillment,
       donorInfo: selectedDonor
         ? {
             fullname: selectedDonor.fullname,
@@ -1702,16 +1220,18 @@ const GuestReceipt = () => {
       donorDisplay: selectedDonor
         ? `${selectedDonor.fullname}`
         : `${donorInfo.fullname} (New)`,
-      totalAmount: totalAmount,
-      totalWeight: totalWeight,
-      totalPackets: totalPackets,
+      totalAmount: totalAmount + courierCharge,
+      totalWeight: categoryV2PrasadPreview?.grams ?? totalWeight,
+      totalPackets: categoryV2PrasadPreview?.packets ?? totalPackets,
       payload: {
         list: donations.map(({ id: _id, ...rest }) => rest),
         remarks,
-        mahaprasadFulfillment: {
-          mode: "collection",
-          type: selectedPrasadType,
-        },
+        courierCharge,
+        deliveryAddress:
+          mahaprasadFulfillment.mode === "courier"
+            ? deliveryAddress
+            : undefined,
+        mahaprasadFulfillment,
         donorInfo: selectedDonor
           ? {
               fullname: selectedDonor.fullname,
@@ -1723,7 +1243,7 @@ const GuestReceipt = () => {
       },
     };
     setGroupDonations((prev) => [...prev, newGroupEntry]);
-    setTotalGroupAmount((prev) => prev + totalAmount);
+    setTotalGroupAmount((prev) => prev + totalAmount + courierCharge);
     toast.success(`${newGroupEntry.donorDisplay}'s receipt added to group.`);
     resetForm();
   };
@@ -1858,7 +1378,6 @@ const GuestReceipt = () => {
           data={receiptData}
           isGroup={Array.isArray(receiptData)}
           onClose={handleCloseModal}
-          courierCharge={courierCharge}
           adminName={adminName}
           totals={receiptTotals}
           minDonationWeight={minDonationWeight} // UPDATED: Pass prop to modal
@@ -2241,41 +1760,39 @@ const GuestReceipt = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Category
                 </label>
-                <input
-                  type="text"
-                  placeholder="Search categories..."
-                  className="w-full px-3 py-2 border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={categorySearchQuery}
-                  onFocus={() => setIsCategoryDropdownOpen(true)}
-                  onChange={(e) => {
-                    setCategorySearchQuery(e.target.value);
-                    setIsCategoryDropdownOpen(true);
-                  }}
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search category..."
+                    className="w-full px-3 py-2 border rounded-lg bg-white pr-10"
+                    value={categorySearchQuery}
+                    onFocus={() => setIsCategoryDropdownOpen(true)}
+                    onChange={(e) => {
+                      setCategorySearchQuery(e.target.value);
+                      setIsCategoryDropdownOpen(true);
+                      setSelectedCategoryId("");
+                      setSelectedCategoryDetails(null);
+                      setHighlightedIndex(-1);
+                    }}
+                  />
+                  <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                </div>
                 {isCategoryDropdownOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-full max-w-sm bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto rounded-lg border border-gray-300 bg-white shadow-lg z-20">
                     {availableCategories.length > 0 ? (
                       availableCategories.map((category, index) => (
                         <div
                           key={category._id}
-                          className={`p-3 cursor-pointer border-b last:border-b-0 ${
-                            index === highlightedIndex
-                              ? "bg-indigo-100"
-                              : "hover:bg-indigo-50"
+                          className={`cursor-pointer p-2 hover:bg-gray-100 ${
+                            index === highlightedIndex ? "bg-gray-100" : ""
                           }`}
                           onClick={() => handleSelectCategory(category)}
                         >
-                          <p className="font-medium text-gray-800">
-                            {category.categoryName}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            ₹{category.rate} | {category.weight}g |{" "}
-                            {category.packet ? "Packet" : "Loose"}
-                          </p>
+                          {category.categoryName}
                         </div>
                       ))
                     ) : (
-                      <div className="p-3 text-center text-gray-500 text-sm">
+                      <div className="p-3 text-center text-gray-500">
                         No categories found.
                       </div>
                     )}
@@ -2283,7 +1800,7 @@ const GuestReceipt = () => {
                 )}
               </div>
 
-              {selectedCategoryDetails?.dynamic?.isDynamic ? (
+              {categoryUsesMinimumAmount(selectedCategoryDetails) ? (
                 // DYNAMIC CATEGORY VIEW
                 <>
                 {selectedCategoryDetails.minimumAmountPerUnit && (
@@ -2307,7 +1824,10 @@ const GuestReceipt = () => {
                   </label>
                   <input
                     type="number"
-                    placeholder="Enter custom amount"
+                    placeholder={`Minimum ₹${getMinimumDonationAmount(
+                      selectedCategoryDetails,
+                      quantity
+                    ).toLocaleString("en-IN")}`}
                     className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     value={dynamicAmount}
                     onChange={(e) => setDynamicAmount(e.target.value)}
@@ -2354,23 +1874,114 @@ const GuestReceipt = () => {
 
               <button
                 onClick={handleAddDonation}
-                className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-indigo-300 flex items-center justify-center gap-2 h-10"
+                className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 disabled:bg-green-300 flex items-center justify-center gap-2 h-10"
               >
-                <Plus size={18} /> Add
+                {editingDonationId ? <Pencil size={18} /> : <Plus size={18} />}
+                {editingDonationId ? "Update" : "Add"}
               </button>
             </div>
 
             {selectedCategoryDetails && (
-              <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 text-sm text-yellow-800 rounded-lg">
-                <div className="pl-1 pb-1">
-                  <b>Details: </b>
+              <div className="mt-4 rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                <div className="flex flex-wrap items-center justify-around gap-x-6 gap-y-2">
+                  <p>
+                    <strong>Rate:</strong> ₹{selectedCategoryDetails.rate}
+                  </p>
+                  {selectedCategoryDetails.configurationVersion ===
+                  "category-v2" ? (
+                    <p>
+                      <strong>Mahaprasad:</strong>{" "}
+                      {selectedCategoryDetails.prasadType === "none"
+                        ? "Not applicable"
+                        : selectedCategoryDetails.prasadType === "packet"
+                          ? `${selectedCategoryDetails.packetsPerUnit || 1} packet(s) per quantity${
+                              selectedCategoryDetails.allowGramAlternativeForInPerson
+                                ? ", or Halwa calculated from the donation amount"
+                                : ""
+                            }`
+                          : "Halwa calculated from the donation amount"}
+                    </p>
+                  ) : (
+                    <>
+                      <p>
+                        <strong>Weight:</strong> {selectedCategoryDetails.weight}g
+                      </p>
+                      <p>
+                        <strong>Packet:</strong>{" "}
+                        {selectedCategoryDetails.packet ? "Yes" : "No"}
+                      </p>
+                    </>
+                  )}
                 </div>
-                <hr />
-                <div className="flex justify-between p-1">
-                  <p>Category: {selectedCategoryDetails.categoryName} </p>
-                  <p>Rate: ₹{selectedCategoryDetails.rate} </p>
-                  <p>Weight: {selectedCategoryDetails.weight}g </p>
-                  <p>Packet: {selectedCategoryDetails.packet ? "Yes" : "No"}</p>
+              </div>
+            )}
+            {pratimaCategory && (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <p className="font-semibold text-amber-900">
+                  Maa Durga Pratima contribution (Optional)
+                </p>
+                <div className="mt-3 grid grid-cols-1 items-end gap-3 md:grid-cols-3">
+                  {pratimaCategory.minimumAmountPerUnit && (
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-amber-900">
+                        Quantity
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={pratimaQuantity}
+                        onChange={(event) =>
+                          setPratimaQuantity(event.target.value)
+                        }
+                        className="w-full rounded-lg border border-amber-300 bg-white p-2 text-sm"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-amber-900">
+                      Contribution amount (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={pratimaAmount}
+                      onChange={(event) => setPratimaAmount(event.target.value)}
+                      placeholder={`Minimum ₹${(
+                        Number(pratimaCategory.rate) *
+                        (pratimaCategory.minimumAmountPerUnit
+                          ? Number(pratimaQuantity) || 1
+                          : 1)
+                      ).toLocaleString("en-IN")}`}
+                      className="w-full rounded-lg border border-amber-300 bg-white p-2 text-sm"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePratimaContribution}
+                      className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+                    >
+                      {donations.some(
+                        (donation) =>
+                          donation.categoryCode === "maa_durga_pratima"
+                      )
+                        ? "Update contribution"
+                        : "Add contribution"}
+                    </button>
+                    {donations.some(
+                      (donation) =>
+                        donation.categoryCode === "maa_durga_pratima"
+                    ) && (
+                      <button
+                        type="button"
+                        onClick={removePratimaContribution}
+                        className="rounded-lg border border-amber-400 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -2389,13 +2000,7 @@ const GuestReceipt = () => {
                         Amount
                       </th>
                       <th className="p-3 text-left font-semibold text-slate-700">
-                        Weight (g)
-                      </th>
-                      <th className="p-3 text-left font-semibold text-slate-700">
-                        Packet
-                      </th>
-                      <th className="p-3 text-left font-semibold text-slate-700">
-                        Action
+                        Actions
                       </th>
                     </tr>
                   </thead>
@@ -2409,14 +2014,22 @@ const GuestReceipt = () => {
                         <td className="p-3 text-slate-700">
                           ₹{d.amount.toLocaleString("en-IN")}
                         </td>
-                        <td className="p-3 text-slate-700">{d.quantity}</td>
-                        <td className="p-3 text-slate-700">
-                          {d.isPacket ? "Yes" : "No"}
-                        </td>
-                        <td className="p-3">
+                        <td className="flex gap-3 p-3">
                           <button
+                            type="button"
+                            onClick={() => handleEditDonation(d)}
+                            className="text-blue-600 hover:text-blue-800"
+                            aria-label={`Edit ${d.category}`}
+                            title="Edit donation item"
+                          >
+                            <Pencil size={18} />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => removeDonation(d.id)}
                             className="text-red-500 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 rounded-full transition-colors"
+                            aria-label={`Remove ${d.category}`}
+                            title="Remove donation item"
                           >
                             <XCircle size={18} />
                           </button>
@@ -2434,20 +2047,40 @@ const GuestReceipt = () => {
               3. Payment & Finalize
             </h2>
             <div className="space-y-6">
+              {prasadEligibleDonationAmount > 0 && (
+                <DonationFulfillmentFields
+                  mode={fulfillmentMode}
+                  onModeChange={(mode) => {
+                    setFulfillmentMode(mode);
+                    setSelectedPrasadType("");
+                  }}
+                  prasadType={selectedPrasadType}
+                  onPrasadTypeChange={setSelectedPrasadType}
+                  hasGramOption={effectiveHasGramCollectionOption}
+                  hasPacketOption={effectiveHasPacketCollectionOption}
+                  courierEligible={isCourierDonationEligible}
+                  minimumCourierAmount={minimumCourierDonationAmount}
+                  deliveryAddress={deliveryAddress}
+                  onDeliveryAddressChange={setDeliveryAddress}
+                  disabled={isSubmitting}
+                />
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
                   <h4 className="font-semibold text-purple-800 mb-2">
                     Mahaprasad Summary
                   </h4>
                   <p className="text-sm flex justify-between pr-1">
-                    Total Weight (g):{" "}
+                    Total Weight:{" "}
                     <span className="font-bold">
                       {/* --- UPDATED: Show final adjusted weight --- */}
-                      {usesOnlyCategoryV2
-                        ? selectedPrasadType === "halwa"
-                          ? "Calculated on submission"
-                          : "0"
-                        : finalDisplayedWeight.toLocaleString("en-IN")}
+                      {formatPrasadWeight(
+                        categoryV2PrasadPreview
+                          ? categoryV2PrasadPreview.grams
+                          : fulfillmentMode === "courier"
+                            ? 0
+                            : finalDisplayedWeight
+                      )}
                     </span>
                   </p>
                   {/* --- UPDATED: Conditionally show note --- */}
@@ -2459,19 +2092,11 @@ const GuestReceipt = () => {
                   <p className="text-sm flex justify-between pr-1">
                     Total Packets:{" "}
                     <span className="font-bold">
-                      {usesOnlyCategoryV2
-                        ? selectedPrasadType === "packet"
-                          ? donations
-                              .filter((item) => item.prasadType === "packet")
-                              .reduce(
-                                (sum, item) =>
-                                  sum +
-                                  item.number * (item.packetsPerUnit || 1),
-                                0
-                              )
-                              .toLocaleString("en-IN")
-                          : "0"
-                        : totalPackets.toLocaleString("en-IN")}
+                      {categoryV2PrasadPreview
+                        ? categoryV2PrasadPreview.packets.toLocaleString("en-IN")
+                        : fulfillmentMode === "courier"
+                          ? "1"
+                          : totalPackets.toLocaleString("en-IN")}
                     </span>
                   </p>
                 </div>
@@ -2498,44 +2123,6 @@ const GuestReceipt = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {usesOnlyCategoryV2 &&
-                  (hasGramCollectionOption || hasPacketCollectionOption) && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Prasad to collect
-                      </label>
-                      <div className="flex flex-wrap gap-5">
-                        {hasGramCollectionOption && (
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="guestPrasadType"
-                              value="halwa"
-                              checked={selectedPrasadType === "halwa"}
-                              onChange={(event) =>
-                                setSelectedPrasadType(event.target.value)
-                              }
-                            />
-                            Quantity in grams
-                          </label>
-                        )}
-                        {hasPacketCollectionOption && (
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="guestPrasadType"
-                              value="packet"
-                              checked={selectedPrasadType === "packet"}
-                              onChange={(event) =>
-                                setSelectedPrasadType(event.target.value)
-                              }
-                            />
-                            Packet
-                          </label>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 {donationType === "individual" && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
