@@ -25,6 +25,7 @@ import DonationFulfillmentFields, {
 } from "../components/DonationFulfillmentFields";
 import DonationReceiptTemplate from "../components/DonationReceiptTemplate";
 import PrasadTokenTemplate from "../components/PrasadTokenTemplate";
+import DonationStatusBadge from "../components/DonationStatusBadge";
 import {
   calculateCategoryV2Prasad,
   categoryUsesMinimumAmount,
@@ -407,13 +408,16 @@ const PreviousDonations = ({ donations, isLoading }) => {
             key={donation._id}
             className="bg-white p-3 rounded-lg shadow-sm border"
           >
-            <div className="flex justify-between items-center mb-2">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
               <span className="text-sm font-bold text-blue-600">
                 Date: {new Date(donation.createdAt).toLocaleDateString("en-GB")}
               </span>
-              <span className="text-sm font-bold text-gray-800">
-                Total: ₹{donation.amount.toLocaleString("en-IN")}
-              </span>
+              <div className="flex items-center gap-2">
+                <DonationStatusBadge status={donation.paymentStatus} />
+                <span className="text-sm font-bold text-gray-800">
+                  Total: ₹{donation.amount.toLocaleString("en-IN")}
+                </span>
+              </div>
             </div>
             <hr />
             <table className="w-full text-xs mt-2">

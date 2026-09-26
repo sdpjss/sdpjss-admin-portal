@@ -30,6 +30,7 @@ import GuestList from "./pages/GuestList";
 import PrintingPortal from "./pages/PrintingPortal";
 import RefundPage from "./pages/RefundPage";
 import TodoApp from "./pages/TodoListManager";
+import RazorpaySettlements from "./pages/RazorpaySettlements";
 
 const App = () => {
   const { aToken, setAToken, isLiveApproved } = useContext(AdminContext);
@@ -121,6 +122,10 @@ const App = () => {
             <Route path="/job-opening-list" element={<JobOpeningList />} />
             <Route path="/advertisement-list" element={<AdvertisementList />} />
             <Route path="/donation-list" element={<DonationList />} />
+            <Route
+              path="/razorpay-settlements"
+              element={<RazorpaySettlements />}
+            />
             <Route path="/notice-board" element={<NoticeBoard />} />
             <Route path="/manage-team" element={<ManageTeam />} />
             <Route path="/donation-categories" element={<DonationCategory />} />
