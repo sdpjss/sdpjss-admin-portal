@@ -230,9 +230,9 @@ const RazorpaySettlements = () => {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
-          title="Actually Settled"
-          value={formatPaise(summary.actualSettledAmountPaise)}
-          subtitle={`${summary.processedSettlementCount || 0} processed settlements`}
+          title="Gross Payment Amount"
+          value={formatPaise(summary.grossSettledPaymentAmountPaise)}
+          subtitle={`Before Razorpay fees and tax · ${summary.processedSettlementCount || 0} processed settlements`}
           icon={<CheckCircle2 className="text-emerald-700" size={22} />}
           tone="bg-emerald-100"
         />
@@ -304,23 +304,22 @@ const RazorpaySettlements = () => {
                 <th className="px-4 py-3">Settlement</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Scheduled / created</th>
-                <th className="px-4 py-3">UTR</th>
-                <th className="px-4 py-3 text-right">Actually settled</th>
-                <th className="px-4 py-3 text-right">Expected</th>
+                <th className="px-4 py-3">Bank Settlement Reference (UTR)</th>
+                <th className="px-4 py-3 text-right">Gross amount</th>
                 <th className="px-4 py-3 text-right">Receipts mapped</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="px-4 py-14 text-center text-gray-500">
+                  <td colSpan="7" className="px-4 py-14 text-center text-gray-500">
                     <RefreshCw className="mx-auto mb-2 animate-spin" size={22} />
                     Loading settlement data…
                   </td>
                 </tr>
               ) : visibleSettlements.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="px-4 py-14 text-center text-gray-500">
+                  <td colSpan="7" className="px-4 py-14 text-center text-gray-500">
                     No settlements match the selected filters.
                   </td>
                 </tr>
@@ -381,14 +380,7 @@ const SettlementRows = ({ settlement, isOpen, onToggle }) => (
         {settlement.utr || "—"}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right font-semibold text-gray-900">
-        {settlement.status === "processed" && !settlement.isFuture
-          ? formatPaise(settlement.actualSettledAmountPaise)
-          : formatPaise(0)}
-      </td>
-      <td className="whitespace-nowrap px-4 py-4 text-right font-semibold text-amber-700">
-        {settlement.isFuture || settlement.status === "created"
-          ? formatPaise(settlement.amountPaise)
-          : "—"}
+        {formatPaise(settlement.grossPaymentAmountPaise)}
       </td>
       <td className="px-4 py-4 text-right text-gray-600">
         {settlement.matchedReceiptCount}/{settlement.receiptMappableCount}
@@ -396,7 +388,7 @@ const SettlementRows = ({ settlement, isOpen, onToggle }) => (
     </tr>
     {isOpen && (
       <tr>
-        <td colSpan="8" className="bg-slate-50 px-5 py-5">
+        <td colSpan="7" className="bg-slate-50 px-5 py-5">
           <TransactionTable transactions={settlement.transactions} />
         </td>
       </tr>
@@ -424,8 +416,6 @@ const TransactionTable = ({ transactions }) => {
             <th className="px-3 py-2">Donor</th>
             <th className="px-3 py-2">Local status</th>
             <th className="px-3 py-2 text-right">Gross amount</th>
-            <th className="px-3 py-2 text-right">Fee / tax</th>
-            <th className="px-3 py-2 text-right">Settlement impact</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -453,15 +443,6 @@ const TransactionTable = ({ transactions }) => {
               </td>
               <td className="px-3 py-3 text-right">
                 {formatPaise(transaction.grossAmountPaise)}
-              </td>
-              <td className="px-3 py-3 text-right text-gray-600">
-                <p>{formatPaise(transaction.feePaise)}</p>
-                <p className="mt-1 text-[11px] text-gray-400">
-                  Tax {formatPaise(transaction.taxPaise)}
-                </p>
-              </td>
-              <td className="px-3 py-3 text-right font-semibold">
-                {formatPaise(transaction.netPaise)}
               </td>
             </tr>
           ))}
