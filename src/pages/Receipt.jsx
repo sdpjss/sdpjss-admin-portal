@@ -32,6 +32,7 @@ import DonationFulfillmentFields, {
 } from "../components/DonationFulfillmentFields";
 import DonationReceiptTemplate from "../components/DonationReceiptTemplate";
 import PrasadTokenTemplate from "../components/PrasadTokenTemplate";
+import DonationStatusBadge from "../components/DonationStatusBadge";
 import {
   calculateCategoryV2Prasad,
   categoryUsesMinimumAmount,
@@ -539,6 +540,7 @@ const Receipt = () => {
   const [pratimaAmount, setPratimaAmount] = useState("");
   const [pratimaQuantity, setPratimaQuantity] = useState(1);
   const [paymentMethod, setPaymentMethod] = useState("");
+  const [bankTransactionId, setBankTransactionId] = useState("");
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState([]);
   const [khandans, setKhandans] = useState([]);
@@ -598,7 +600,7 @@ const Receipt = () => {
   };
 
   const userSearchRef = useRef(null);
-  const paymentMethods = ["Cash", "QR Code"];
+  const paymentMethods = ["Cash", "QR Code", "Online"];
   const genderOptions = ["male", "female", "other"];
 
   // Effect to handle single khandan case
@@ -857,8 +859,18 @@ const Receipt = () => {
   useEffect(() => {
     if (selectedUser && donationList) {
       const previous = donationList
-        .filter((donation) => donation.userId?._id === selectedUser._id)
-        .sort((a, b) => new Date(b.date) - new Date(a.date))
+        .filter(
+          (donation) =>
+            donation.userId?._id === selectedUser._id &&
+            ["completed", "pending"].includes(
+              String(donation.paymentStatus || "").toLowerCase()
+            )
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.date || b.createdAt) -
+            new Date(a.date || a.createdAt)
+        )
         .slice(0, 2);
       setUserPreviousDonations(previous);
     } else {
@@ -1410,6 +1422,7 @@ const Receipt = () => {
     setSelectedPrasadType("");
     setDeliveryAddress({ ...emptyDeliveryAddress });
     if (donationType === "individual") setPaymentMethod("");
+    setBankTransactionId("");
     setRemarks("");
     setSelectedCategory("");
     setCategorySearch("");
@@ -1425,6 +1438,12 @@ const Receipt = () => {
     if (donations.length === 0)
       return toast.error("Please add at least one donation");
     if (!paymentMethod) return toast.error("Please select a payment method");
+    if (
+      ["QR Code", "Online"].includes(paymentMethod) &&
+      !bankTransactionId.trim()
+    ) {
+      return toast.error("Please enter the bank transaction ID or UTR");
+    }
     if (
       prasadEligibleDonationAmount > 0 &&
       !["YES", "NO"].includes(willCome)
@@ -1471,6 +1490,9 @@ const Receipt = () => {
         })),
         amount: netPayableAmount,
         method: paymentMethod,
+        transactionId: ["QR Code", "Online"].includes(paymentMethod)
+          ? bankTransactionId.trim()
+          : undefined,
         courierCharge,
         remarks,
         postalAddress:
@@ -1484,7 +1506,7 @@ const Receipt = () => {
         mahaprasadFulfillment,
       };
 
-      if (["Cash", "QR Code"].includes(paymentMethod)) {
+      if (["Cash", "QR Code", "Online"].includes(paymentMethod)) {
         const response = await axios.post(
           backendUrl + "/api/admin/create-donation-order",
           orderData,
@@ -2490,14 +2512,19 @@ const Receipt = () => {
                     key={donation._id}
                     className="bg-white border border-gray-200 p-3 rounded-lg shadow-sm"
                   >
-                    <div className="flex justify-between items-center mb-2 pb-2 border-b">
+                    <div className="flex flex-wrap justify-between items-center gap-2 mb-2 pb-2 border-b">
                       <span className="font-semibold text-blue-800">
                         Date:{" "}
-                        {new Date(donation.date).toLocaleDateString("en-IN")}
+                        {new Date(
+                          donation.date || donation.createdAt
+                        ).toLocaleDateString("en-IN")}
                       </span>
-                      <span className="font-bold text-gray-800">
-                        Total: ₹{donation.amount}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <DonationStatusBadge status={donation.paymentStatus} />
+                        <span className="font-bold text-gray-800">
+                          Total: ₹{donation.amount}
+                        </span>
+                      </div>
                     </div>
                     <table className="w-full text-sm">
                       <thead>
@@ -2943,7 +2970,12 @@ const Receipt = () => {
               <select
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
+                onChange={(e) => {
+                  setPaymentMethod(e.target.value);
+                  if (!["QR Code", "Online"].includes(e.target.value)) {
+                    setBankTransactionId("");
+                  }
+                }}
               >
                 <option value="">Select Payment Method</option>
                 {paymentMethods.map((method) => (
@@ -2953,6 +2985,23 @@ const Receipt = () => {
                 ))}
               </select>
             </div>
+            {["QR Code", "Online"].includes(paymentMethod) && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Bank Transaction ID / UTR
+                </label>
+                <input
+                  type="text"
+                  value={bankTransactionId}
+                  onChange={(event) =>
+                    setBankTransactionId(event.target.value)
+                  }
+                  placeholder="Enter bank transaction ID or UTR"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  required
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Remarks (Optional)

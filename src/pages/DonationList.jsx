@@ -20,10 +20,12 @@ import {
   RefreshCw,
   Loader2,
   Pencil,
+  Banknote,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import DonationFulfillmentEditModal from "../components/DonationFulfillmentEditModal";
+import { useNavigate } from "react-router-dom";
 
 // Helper component for the export dropdown (No changes needed here)
 const ExportDropdown = ({ onExport, color = "blue" }) => {
@@ -89,12 +91,14 @@ const convertGramsToKgAndGm = (totalGrams) => {
 };
 
 const DonationList = () => {
+  const navigate = useNavigate();
   const [donationType, setDonationType] = useState("registered");
   const [activeTab, setActiveTab] = useState("donations");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [guestDonationList, setGuestDonationList] = useState([]);
   const [donationsFilters, setDonationsFilters] = useState({
+    year: "",
     dateFrom: "",
     dateTo: "",
     users: [],
@@ -110,6 +114,7 @@ const DonationList = () => {
   const [availableUsers, setAvailableUsers] = useState([]);
   const [availableCategories, setAvailableCategories] = useState([]);
   const [dateRange, setDateRange] = useState({ min: "", max: "" });
+  const [pendingFailedYear, setPendingFailedYear] = useState("");
   const [reconcilingId, setReconcilingId] = useState(null);
   const [donationBeingCorrected, setDonationBeingCorrected] = useState(null);
 
@@ -151,6 +156,62 @@ const DonationList = () => {
   const activeDonationList =
     donationType === "registered" ? donationList : guestDonationList;
 
+  const availableYears = useMemo(
+    () =>
+      [
+        ...new Set(
+          (activeDonationList || [])
+            .filter((donation) =>
+              donation.paymentStatus === "completed" && !donation.refunded
+            )
+            .map((donation) => new Date(donation.createdAt).getFullYear())
+            .filter(Number.isFinite)
+        ),
+      ].sort((a, b) => b - a),
+    [activeDonationList]
+  );
+
+  const pendingFailedYears = useMemo(
+    () =>
+      [
+        ...new Set(
+          (activeDonationList || [])
+            .filter((donation) =>
+              ["pending", "failed"].includes(donation.paymentStatus)
+            )
+            .map((donation) => new Date(donation.createdAt).getFullYear())
+            .filter(Number.isFinite)
+        ),
+      ].sort((a, b) => b - a),
+    [activeDonationList]
+  );
+
+  useEffect(() => {
+    const currentYear = new Date().getFullYear();
+    const selectedYear = pendingFailedYears.includes(currentYear)
+      ? currentYear
+      : pendingFailedYears[0];
+    setPendingFailedYear(selectedYear ? String(selectedYear) : "");
+  }, [pendingFailedYears]);
+
+  const getDateRangeForYear = (year) => {
+    const dates = (activeDonationList || [])
+      .filter(
+        (donation) =>
+          donation.paymentStatus === "completed" &&
+          !donation.refunded &&
+          new Date(donation.createdAt).getFullYear() === Number(year)
+      )
+      .map((donation) => new Date(donation.createdAt))
+      .filter((date) => !Number.isNaN(date.getTime()));
+
+    if (dates.length === 0) return { min: "", max: "" };
+    return {
+      min: new Date(Math.min(...dates)).toISOString().split("T")[0],
+      max: new Date(Math.max(...dates)).toISOString().split("T")[0],
+    };
+  };
+
   useEffect(() => {
     if (activeDonationList && activeDonationList.length > 0) {
       const users = [
@@ -173,14 +234,17 @@ const DonationList = () => {
       ];
       setAvailableCategories(categories);
 
-      const dates = activeDonationList.map((d) => new Date(d.createdAt));
-      const minDate = new Date(Math.min(...dates)).toISOString().split("T")[0];
-      const maxDate = new Date(Math.max(...dates)).toISOString().split("T")[0];
-      setDateRange({ min: minDate, max: maxDate });
+      const currentYear = new Date().getFullYear();
+      const selectedYear = availableYears.includes(currentYear)
+        ? currentYear
+        : availableYears[0];
+      const yearDateRange = getDateRangeForYear(selectedYear);
+      setDateRange(yearDateRange);
 
       setDonationsFilters({
-        dateFrom: minDate,
-        dateTo: maxDate,
+        year: String(selectedYear || ""),
+        dateFrom: yearDateRange.min,
+        dateTo: yearDateRange.max,
         users: [],
         categories: [],
         paymentMode: "all",
@@ -190,6 +254,7 @@ const DonationList = () => {
       setAvailableCategories([]);
       setDateRange({ min: "", max: "" });
       setDonationsFilters({
+        year: "",
         dateFrom: "",
         dateTo: "",
         users: [],
@@ -197,7 +262,18 @@ const DonationList = () => {
         paymentMode: "all",
       });
     }
-  }, [activeDonationList]);
+  }, [activeDonationList, availableYears]);
+
+  const handleDonationYearChange = (year) => {
+    const yearDateRange = getDateRangeForYear(year);
+    setDateRange(yearDateRange);
+    setDonationsFilters((current) => ({
+      ...current,
+      year,
+      dateFrom: yearDateRange.min,
+      dateTo: yearDateRange.max,
+    }));
+  };
 
   // Generic file export utility
   const exportData = (format, data, headers, filename) => {
@@ -247,6 +323,12 @@ const DonationList = () => {
 
     if (["donations", "courier", "pratima"].includes(activeTab)) {
       return completedDonations.filter((d) => {
+        if (
+          donationsFilters.year &&
+          new Date(d.createdAt).getFullYear() !==
+            Number(donationsFilters.year)
+        )
+          return false;
         const donationDate = new Date(d.createdAt).toISOString().split("T")[0];
         if (
           donationsFilters.dateFrom &&
@@ -536,6 +618,7 @@ const DonationList = () => {
           donatedFor: d.donatedAs,
           donatedForName: `${donorName} ${relationship}`,
           receiptId: d.receiptId,
+          transactionId: d.transactionId || "N/A",
         };
 
         const collectionMode = prasadCollectionModeAsLocalPickup(d) ? 'Local Pickup' : 'Courier';
@@ -568,6 +651,7 @@ const DonationList = () => {
         { label: "Donated For", key: "donatedFor" },
         { label: "Donated For Name", key: "donatedForName" },
         { label: "Receipt #", key: "receiptId" },
+        { label: "Transaction ID", key: "transactionId" },
         { label: "Category", key: "category" },
         { label: "Number", key: "number" },
         { label: "Amount", key: "amount" },
@@ -580,8 +664,8 @@ const DonationList = () => {
 
       const filename =
         donationType === "registered"
-          ? "All_Registered_Donations"
-          : "All_Guest_Donations";
+          ? `Registered_Donations_${donationsFilters.year}`
+          : `Guest_Donations_${donationsFilters.year}`;
       exportData(format, exportDataList, headers, filename);
     };
 
@@ -616,7 +700,25 @@ const DonationList = () => {
             <Filter className="text-blue-500 w-5 h-5" />
             <h3 className="text-lg font-semibold text-gray-900">Filters</h3>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Year
+              </label>
+              <select
+                value={donationsFilters.year}
+                onChange={(event) =>
+                  handleDonationYearChange(event.target.value)
+                }
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                {availableYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 From Date
@@ -706,6 +808,7 @@ const DonationList = () => {
             <button
               onClick={() =>
                 setDonationsFilters({
+                  year: donationsFilters.year,
                   dateFrom: dateRange.min,
                   dateTo: dateRange.max,
                   users: [],
@@ -739,10 +842,10 @@ const DonationList = () => {
                 <tr>
                   {[
                     ...(activeTab === "courier"
-                      ? ["Receipt #", "User", "Donation Amount", "Courier Charge", "Total Paid", "Delivery Address", "Method", "Date"]
+                      ? ["Receipt #", "Transaction ID", "User", "Donation Amount", "Courier Charge", "Total Paid", "Delivery Address", "Method", "Date"]
                       : activeTab === "pratima"
-                        ? ["Receipt #", "User", "Pratima Quantity", "Pratima Amount", "Other Donations", "Receipt Donation Total", "Method", "Date"]
-                        : ["Receipt #", "User", "Donated For", "Categories", "Donation Amount", "Method", "Status", "Date"]),
+                        ? ["Receipt #", "Transaction ID", "User", "Pratima Quantity", "Pratima Amount", "Other Donations", "Receipt Donation Total", "Method", "Date"]
+                        : ["Receipt #", "Transaction ID", "User", "Donated For", "Categories", "Donation Amount", "Method", "Status", "Date"]),
                     ...(donationType === "registered" ? ["Actions"] : []),
                   ].map((h) => (
                     <th
@@ -759,6 +862,9 @@ const DonationList = () => {
                   <tr key={d._id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">
                       {d.receiptId}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-mono text-gray-700 whitespace-nowrap">
+                      {d.transactionId || "N/A"}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       <div>
@@ -834,7 +940,7 @@ const DonationList = () => {
                   </tr>
                 ))}
                 {reportDonations.length === 0 && (
-                  <tr><td colSpan={donationType === "registered" ? 9 : 8} className="px-4 py-10 text-center text-sm text-gray-500">No records found for the selected view and filters.</td></tr>
+                  <tr><td colSpan={donationType === "registered" ? 10 : 9} className="px-4 py-10 text-center text-sm text-gray-500">No records found for the selected view and filters.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1211,9 +1317,12 @@ const DonationList = () => {
     const pendingFailedDonations = useMemo(() => {
       console.log("Active Donation List:", activeDonationList);
       return (activeDonationList || []).filter(
-        (d) => d.paymentStatus === "pending" || d.paymentStatus === "failed"
+        (d) =>
+          (d.paymentStatus === "pending" || d.paymentStatus === "failed") &&
+          (!pendingFailedYear ||
+            new Date(d.createdAt).getFullYear() === Number(pendingFailedYear))
       );
-    }, [activeDonationList]);
+    }, [activeDonationList, pendingFailedYear]);
 
     const stats = useMemo(() => {
       const pending = pendingFailedDonations.filter(
@@ -1245,6 +1354,7 @@ const DonationList = () => {
             } ${d.userId?.fatherName || "N/A"
           }`,
           razorpayOrderId: d.razorpayOrderId || "N/A",
+          transactionId: d.transactionId || "N/A",
           categories: d.list
             .map((item) => `${item.category} (${item.number})`)
             .join(", "),
@@ -1257,6 +1367,7 @@ const DonationList = () => {
         { label: "Date", key: "date" },
         { label: "User", key: "user" },
         { label: "Razorpay Order ID", key: "razorpayOrderId" },
+        { label: "Transaction ID", key: "transactionId" },
         { label: "Categories", key: "categories" },
         { label: "Amount (INR)", key: "amount" },
         { label: "Method", key: "method" },
@@ -1264,8 +1375,8 @@ const DonationList = () => {
       ];
       const filename =
         donationType === "registered"
-          ? "Pending_Failed_Registered_Donations"
-          : "Pending_Failed_Guest_Donations";
+          ? `Pending_Failed_Registered_Donations_${pendingFailedYear}`
+          : `Pending_Failed_Guest_Donations_${pendingFailedYear}`;
       exportData(format, exportDataList, headers, filename);
     };
 
@@ -1331,11 +1442,29 @@ const DonationList = () => {
         </div>
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+          <div className="p-4 border-b border-gray-200 flex flex-wrap justify-between items-center gap-4">
             <h3 className="text-lg font-semibold text-gray-900">
               Pending & Failed Donations List ({stats.totalCount})
             </h3>
-            <ExportDropdown onExport={handleExport} color="red" />
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Year
+                </label>
+                <select
+                  value={pendingFailedYear}
+                  onChange={(event) => setPendingFailedYear(event.target.value)}
+                  className="min-w-28 p-2 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-red-500"
+                >
+                  {pendingFailedYears.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <ExportDropdown onExport={handleExport} color="red" />
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -1343,6 +1472,7 @@ const DonationList = () => {
                 <tr>
                   {[
                     "Razorpay Order ID",
+                    "Transaction ID",
                     "User",
                     "Categories",
                     "Amount",
@@ -1365,6 +1495,9 @@ const DonationList = () => {
                   <tr key={d._id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">
                       {d.razorpayOrderId || "N/A"}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-mono text-gray-700 whitespace-nowrap">
+                      {d.transactionId || "N/A"}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       <div>
@@ -1484,27 +1617,37 @@ const DonationList = () => {
               Track and manage all donations with detailed analytics
             </p>
           </div>
-          <div className="flex bg-gray-100 rounded-lg p-1 self-start">
+          <div className="flex flex-wrap items-center gap-3 self-start">
             <button
-              onClick={() => setDonationType("registered")}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors w-1/2 md:w-auto ${
-                donationType === "registered"
-                  ? "bg-white text-blue-600 shadow-sm"
-                  : "text-gray-600 hover:bg-gray-200"
-              }`}
+              type="button"
+              onClick={() => navigate("/razorpay-settlements")}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
             >
-              Registered Users
+              <Banknote size={16} />
+              Razorpay Settlements
             </button>
-            <button
-              onClick={() => setDonationType("guest")}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors w-1/2 md:w-auto ${
-                donationType === "guest"
-                  ? "bg-white text-blue-600 shadow-sm"
-                  : "text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              Guest Users
-            </button>
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setDonationType("registered")}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors w-1/2 md:w-auto ${
+                  donationType === "registered"
+                    ? "bg-white text-blue-600 shadow-sm"
+                    : "text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                Registered Users
+              </button>
+              <button
+                onClick={() => setDonationType("guest")}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors w-1/2 md:w-auto ${
+                  donationType === "guest"
+                    ? "bg-white text-blue-600 shadow-sm"
+                    : "text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                Guest Users
+              </button>
+            </div>
           </div>
         </div>
         <div className="border-b border-gray-200 mt-4">
