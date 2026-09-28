@@ -21,6 +21,7 @@ import {
   Loader2,
   Pencil,
   Banknote,
+  UserRoundX,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -1618,6 +1619,14 @@ const DonationList = () => {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 self-start">
+            <button
+              type="button"
+              onClick={() => navigate("/donation-defaulters")}
+              className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+            >
+              <UserRoundX size={16} />
+              Donation Defaulters
+            </button>
             <button
               type="button"
               onClick={() => navigate("/razorpay-settlements")}
