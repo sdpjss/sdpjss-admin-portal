@@ -7,9 +7,12 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Download,
   RefreshCw,
   Search,
 } from "lucide-react";
+import * as XLSX from "xlsx";
+import Papa from "papaparse";
 import { AdminContext } from "../context/AdminContext";
 
 const formatCurrency = (amount) =>
@@ -29,6 +32,32 @@ const formatDate = (value) =>
         timeStyle: "short",
       }).format(new Date(value))
     : "—";
+
+const formatExportDate = (value) =>
+  value
+    ? new Intl.DateTimeFormat("en-IN", {
+        dateStyle: "medium",
+        timeStyle: "medium",
+        timeZone: "Asia/Kolkata",
+      }).format(new Date(value))
+    : "";
+
+const exportColumns = [
+  ["Settlement Date & Time", "settledAt"],
+  ["Razorpay Settlement ID", "settlementId"],
+  ["Net Settlement Amount (₹)", "settlementAmount"],
+  ["Bank Settlement Reference (UTR)", "bankTransactionId"],
+  ["Donation Receipt No.", "donationReceiptNumber"],
+  ["Donation Transaction ID", "donationTransactionId"],
+  ["Donation Date & Time", "donationDate"],
+  ["Donation Category", "donationCategory"],
+  ["Category Donation Amount (₹)", "donationCategoryAmount"],
+  ["Donor Name", "donorName"],
+  ["Donor's Father's Name", "donorFatherName"],
+  ["Donor's Spouse Name", "donorSpouseName"],
+  ["Donor Mobile No.", "donorMobileNumber"],
+  ["Donor Email", "donorEmailAddress"],
+];
 
 const statusStyle = {
   processed: "bg-emerald-100 text-emerald-700",
@@ -59,6 +88,8 @@ const RazorpaySettlements = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [error, setError] = useState("");
 
   const loadSettlements = useCallback(async () => {
@@ -106,6 +137,68 @@ const RazorpaySettlements = () => {
       );
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const exportSettlements = async (format) => {
+    setExporting(true);
+    setExportOpen(false);
+    setError("");
+    try {
+      const response = await axios.get(
+        `${backendUrl}/api/admin/razorpay-settlements/export`,
+        {
+          headers: { aToken },
+          params: { year },
+        }
+      );
+      const exportRows = (response.data.rows || []).map((row) => ({
+        ...row,
+        settledAt: formatExportDate(row.settledAt),
+        donationDate: formatExportDate(row.donationDate),
+      }));
+
+      if (!exportRows.length) {
+        setError(`No processed settlement donations are available for ${year}.`);
+        return;
+      }
+
+      const formattedRows = exportRows.map((row) =>
+        Object.fromEntries(
+          exportColumns.map(([label, key]) => [label, row[key] ?? ""])
+        )
+      );
+      const filename = `razorpay-settlement-donations-${year}`;
+
+      if (format === "csv") {
+        const csv = Papa.unparse(formattedRows);
+        const blob = new Blob(["\uFEFF", csv], {
+          type: "text/csv;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${filename}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } else {
+        const worksheet = XLSX.utils.json_to_sheet(formattedRows);
+        worksheet["!cols"] = exportColumns.map(([label]) => ({
+          wch: Math.max(18, Math.min(label.length + 8, 34)),
+        }));
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Settlements");
+        XLSX.writeFile(workbook, `${filename}.xlsx`);
+      }
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message ||
+          "Unable to export Razorpay settlement donations."
+      );
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -174,6 +267,36 @@ const RazorpaySettlements = () => {
                 </option>
               ))}
             </select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setExportOpen((current) => !current)}
+                disabled={loading || exporting}
+                className="inline-flex items-center gap-2 rounded-lg border border-blue-600 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Download size={16} />
+                {exporting ? "Exporting…" : "Export"}
+                <ChevronDown size={15} />
+              </button>
+              {exportOpen && (
+                <div className="absolute right-0 z-30 mt-2 w-40 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => exportSettlements("xlsx")}
+                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Excel (.xlsx)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportSettlements("csv")}
+                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    CSV (.csv)
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={synchronizeSettlements}
