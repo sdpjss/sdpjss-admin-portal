@@ -32,10 +32,14 @@ import RefundPage from "./pages/RefundPage";
 import TodoApp from "./pages/TodoListManager";
 import RazorpaySettlements from "./pages/RazorpaySettlements";
 import DonationDefaulters from "./pages/DonationDefaulters";
+import MahaprasadFulfillment from "./pages/MahaprasadFulfillment";
 
 const App = () => {
   const { aToken, setAToken, isLiveApproved } = useContext(AdminContext);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    () => localStorage.getItem("adminSidebarCollapsed") === "true"
+  );
   const [role, setRole] = useState("admin");
 
   const navigate = useNavigate();
@@ -54,6 +58,13 @@ const App = () => {
   }, [aToken, setAToken]);
 
   const isBlocked = role !== "superadmin" && aToken && !isLiveApproved;
+
+  useEffect(() => {
+    localStorage.setItem(
+      "adminSidebarCollapsed",
+      String(isSidebarCollapsed)
+    );
+  }, [isSidebarCollapsed]);
 
   // Auto logout when blocked
   useEffect(() => {
@@ -109,8 +120,14 @@ const App = () => {
         <Sidebar
           isSidebarOpen={isSidebarOpen}
           setIsSidebarOpen={setIsSidebarOpen}
+          isSidebarCollapsed={isSidebarCollapsed}
+          setIsSidebarCollapsed={setIsSidebarCollapsed}
         />
-        <div className="lg:ml-80 min-h-[calc(100vh-4rem)] p-4 sm:p-6">
+        <div
+          className={`min-h-[calc(100vh-4rem)] p-4 transition-[margin] duration-300 sm:p-6 ${
+            isSidebarCollapsed ? "lg:ml-20" : "lg:ml-80"
+          }`}
+        >
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
@@ -126,6 +143,10 @@ const App = () => {
             <Route
               path="/donation-defaulters"
               element={<DonationDefaulters />}
+            />
+            <Route
+              path="/mahaprasad-fulfillment"
+              element={<MahaprasadFulfillment />}
             />
             <Route
               path="/razorpay-settlements"
