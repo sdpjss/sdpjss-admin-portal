@@ -225,7 +225,7 @@ const DonationReceiptTemplate = ({ receiptData }) => {
             (Registered under Indian Trust Act - 1882)
           </div>
           <div style={{ marginBottom: "1px", fontSize: "14px" }}>
-            Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
+            Shree Durga Asthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
             823003
           </div>
           <div style={{ fontSize: "12px", color: "#444" }}>
