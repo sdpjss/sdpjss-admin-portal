@@ -76,6 +76,42 @@ const chunkArray = (arr, size) => {
   return chunks;
 };
 
+const NOT_SPECIFIED = "Not specified";
+
+const getDonationAddress = (donation) => {
+  const deliveryAddress = donation?.deliveryAddress || {};
+  if (
+    deliveryAddress.currlocation ||
+    deliveryAddress.country ||
+    deliveryAddress.state
+  ) {
+    return deliveryAddress;
+  }
+  return donation?.userId?.address || {};
+};
+
+const getLocationGroup = (address) => {
+  const country = String(address?.country || "").trim().toLowerCase();
+  if (address?.currlocation === "outside_india") return "outside_india";
+  if (country && country !== "india") return "outside_india";
+  return "in_india";
+};
+
+const getCountryName = (address) => {
+  const country = String(address?.country || "").trim();
+  if (country) return country;
+  return getLocationGroup(address) === "in_india"
+    ? "India"
+    : NOT_SPECIFIED;
+};
+
+const getStateName = (address) =>
+  String(address?.state || "").trim() || NOT_SPECIFIED;
+
+const matchesLocationValue = (value, selectedValue) =>
+  selectedValue === "all" ||
+  value.toLowerCase() === String(selectedValue).trim().toLowerCase();
+
 // PrintableAddresses component
 const PrintableAddresses = forwardRef(({ addresses }, ref) => {
   if (!addresses || addresses.length === 0) {
@@ -551,6 +587,12 @@ const PrintingPortal = () => {
   // States for Courier Address UI
   const [courierYear, setCourierYear] = useState(new Date().getFullYear());
   const [location, setLocation] = useState("all");
+  const [country, setCountry] = useState("all");
+  const [state, setState] = useState("all");
+  const [courierFilterOptions, setCourierFilterOptions] = useState({
+    countries: [],
+    states: [],
+  });
   const [donorType, setDonorType] = useState("all"); // <-- NEW STATE
   const [availableYears, setAvailableYears] = useState([]);
   const [addresses, setAddresses] = useState([]);
@@ -562,6 +604,9 @@ const PrintingPortal = () => {
   const [receiptYear, setReceiptYear] = useState(new Date().getFullYear());
   const [paymentMode, setPaymentMode] = useState("all");
   const [userType, setUserType] = useState("all");
+  const [receiptLocation, setReceiptLocation] = useState("all");
+  const [receiptCountry, setReceiptCountry] = useState("all");
+  const [receiptState, setReceiptState] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [allDonations, setAllDonations] = useState([]);
   const [loadingDonations, setLoadingDonations] = useState(false);
@@ -609,7 +654,18 @@ const PrintingPortal = () => {
   }, [backendUrl, aToken]);
 
   const fetchAddresses = useCallback(async () => {
-    console.log("Fetching address for year:", courierYear, "location:", location, "donorType:", donorType);
+    console.log(
+      "Fetching address for year:",
+      courierYear,
+      "location:",
+      location,
+      "country:",
+      country,
+      "state:",
+      state,
+      "donorType:",
+      donorType
+    );
     if (!courierYear) return;
     setLoading(true);
     setError("");
@@ -617,7 +673,13 @@ const PrintingPortal = () => {
       const response = await axios.get(
         `${backendUrl}/api/admin/courier-addresses`,
         {
-          params: { year: courierYear, location, donorType },
+          params: {
+            year: courierYear,
+            location,
+            country,
+            state,
+            donorType,
+          },
           headers: { aToken },
         }
       );
@@ -627,6 +689,10 @@ const PrintingPortal = () => {
         // 3. Set the processed list to state
         setAddresses(allFetchedAddresses);
         setAddressCount(allFetchedAddresses.length);
+        setCourierFilterOptions({
+          countries: response.data.filters?.countries || [],
+          states: response.data.filters?.states || [],
+        });
       } else {
         setError(response.data.message || "Failed to fetch addresses.");
         setAddresses([]);
@@ -637,10 +703,20 @@ const PrintingPortal = () => {
       setError("An error occurred while fetching data.");
       setAddresses([]);
       setAddressCount(0);
+      setCourierFilterOptions({ countries: [], states: [] });
     } finally {
       setLoading(false);
     }
-  }, [courierYear, location, donorType, backendUrl, aToken]);
+  }, [courierYear, location, country, state, donorType, backendUrl, aToken]);
+
+  useEffect(() => {
+    setCountry("all");
+    setState("all");
+  }, [location, courierYear, donorType]);
+
+  useEffect(() => {
+    setState("all");
+  }, [country]);
 
   const fetchDonations = useCallback(async () => {
     console.log("Fetching donations for receipts");
@@ -700,6 +776,61 @@ const PrintingPortal = () => {
     }
   }, [printType, fetchAddresses, fetchDonations]);
 
+  const receiptLocationDonations = useMemo(
+    () =>
+      allDonations.filter((donation) => {
+        if (receiptLocation === "all") return true;
+        return (
+          getLocationGroup(getDonationAddress(donation)) === receiptLocation
+        );
+      }),
+    [allDonations, receiptLocation]
+  );
+
+  const receiptCountries = useMemo(
+    () =>
+      [
+        ...new Set(
+          receiptLocationDonations.map((donation) =>
+            getCountryName(getDonationAddress(donation))
+          )
+        ),
+      ].sort((first, second) => first.localeCompare(second)),
+    [receiptLocationDonations]
+  );
+
+  const receiptCountryDonations = useMemo(
+    () =>
+      receiptLocationDonations.filter((donation) =>
+        matchesLocationValue(
+          getCountryName(getDonationAddress(donation)),
+          receiptCountry
+        )
+      ),
+    [receiptCountry, receiptLocationDonations]
+  );
+
+  const receiptStates = useMemo(
+    () =>
+      [
+        ...new Set(
+          receiptCountryDonations.map((donation) =>
+            getStateName(getDonationAddress(donation))
+          )
+        ),
+      ].sort((first, second) => first.localeCompare(second)),
+    [receiptCountryDonations]
+  );
+
+  useEffect(() => {
+    setReceiptCountry("all");
+    setReceiptState("all");
+  }, [receiptLocation]);
+
+  useEffect(() => {
+    setReceiptState("all");
+  }, [receiptCountry]);
+
   const filteredDonations = useMemo(() => {
     return allDonations.filter((d) => {
       const donationYear = new Date(d.createdAt).getFullYear();
@@ -724,10 +855,39 @@ const PrintingPortal = () => {
       const userTypeMatch = userType === "all" || d.userType === userType;
       const searchMatch =
         searchTerm === "" || donorName.includes(searchTerm.toLowerCase());
+      const address = getDonationAddress(d);
+      const locationMatch =
+        receiptLocation === "all" ||
+        getLocationGroup(address) === receiptLocation;
+      const countryMatch = matchesLocationValue(
+        getCountryName(address),
+        receiptCountry
+      );
+      const stateMatch = matchesLocationValue(
+        getStateName(address),
+        receiptState
+      );
 
-      return yearMatch && paymentMatch && userTypeMatch && searchMatch;
+      return (
+        yearMatch &&
+        paymentMatch &&
+        userTypeMatch &&
+        searchMatch &&
+        locationMatch &&
+        countryMatch &&
+        stateMatch
+      );
     });
-  }, [allDonations, receiptYear, paymentMode, userType, searchTerm]);
+  }, [
+    allDonations,
+    receiptYear,
+    paymentMode,
+    userType,
+    searchTerm,
+    receiptLocation,
+    receiptCountry,
+    receiptState,
+  ]);
 
   const handleDownloadAddressesPDF = () => {
     if (downloading || addresses.length === 0) return;
@@ -900,10 +1060,51 @@ const PrintingPortal = () => {
             onChange={(e) => setLocation(e.target.value)}
             className="p-2 border border-gray-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-500"
           >
-            <option value="all">All</option>
-            {/* --- Turning-off location filter ---
-            <option value="in_india">In India</option>
-            <option value="outside_india">Outside India</option>*/}
+            <option value="all">All locations</option>
+            <option value="in_india">India</option>
+            <option value="outside_india">Outside India</option>
+          </select>
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="country"
+            className="text-xs font-semibold text-gray-600 mb-1"
+          >
+            Country
+          </label>
+          <select
+            id="country"
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            className="p-2 border border-gray-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">All countries</option>
+            {courierFilterOptions.countries.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="state"
+            className="text-xs font-semibold text-gray-600 mb-1"
+          >
+            State
+          </label>
+          <select
+            id="state"
+            value={state}
+            onChange={(e) => setState(e.target.value)}
+            className="p-2 border border-gray-300 rounded bg-white text-sm focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">All states</option>
+            {courierFilterOptions.states.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
         </div>
         {/* --- NEW Donor Type Filter --- */}
@@ -1016,6 +1217,69 @@ const PrintingPortal = () => {
             <option value="registered">Registered</option>
             <option value="guest">Guest</option>
             <option value="child">Child</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col space-y-2">
+          <label
+            htmlFor="receiptLocation"
+            className="text-sm font-semibold text-gray-700"
+          >
+            Location
+          </label>
+          <select
+            id="receiptLocation"
+            value={receiptLocation}
+            onChange={(e) => setReceiptLocation(e.target.value)}
+            className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+          >
+            <option value="all">All locations</option>
+            <option value="in_india">India</option>
+            <option value="outside_india">Outside India</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col space-y-2">
+          <label
+            htmlFor="receiptCountry"
+            className="text-sm font-semibold text-gray-700"
+          >
+            Country
+          </label>
+          <select
+            id="receiptCountry"
+            value={receiptCountry}
+            onChange={(e) => setReceiptCountry(e.target.value)}
+            className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+          >
+            <option value="all">All countries</option>
+            {receiptCountries.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col space-y-2">
+          <label
+            htmlFor="receiptState"
+            className="text-sm font-semibold text-gray-700"
+          >
+            State
+          </label>
+          <select
+            id="receiptState"
+            value={receiptState}
+            onChange={(e) => setReceiptState(e.target.value)}
+            className="px-3 py-2.5 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+          >
+            <option value="all">All states</option>
+            {receiptStates.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
         </div>
 
