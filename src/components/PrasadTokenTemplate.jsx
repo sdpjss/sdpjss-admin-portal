@@ -7,6 +7,7 @@ const PrasadTokenTemplate = ({
   if (!receiptData) return null;
 
   const { donation, user, childUser } = receiptData;
+  const fulfillmentType = donation.mahaprasadFulfillment?.type;
   const donorName = childUser ? childUser.fullname : user.fullname;
   const relationship = donation.relationName
     ? `W/O ${donation.relationName}`
@@ -16,17 +17,21 @@ const PrasadTokenTemplate = ({
   const calculatedPackets = (donation.list || []).reduce((sum, item) => {
     return sum + (item.isPacket ? item.quantity : 0);
   }, 0);
-  const totalPackets = Number.isFinite(totalPacketsOverride)
-    ? totalPacketsOverride
-    : calculatedPackets;
+  const totalPackets = ["packet", "mixed"].includes(fulfillmentType)
+    ? Number.isFinite(totalPacketsOverride)
+      ? totalPacketsOverride
+      : calculatedPackets
+    : 0;
 
   // Define the function outside the component
   const calculatedWeight = (donation.list || []).reduce((sum, item) => {
     return sum + (item.isPacket ? 0 : item.quantity);
   }, 0);
-  const totalWeightInGrams = Number.isFinite(totalWeightOverride)
-    ? totalWeightOverride
-    : calculatedWeight;
+  const totalWeightInGrams = ["halwa", "mixed"].includes(fulfillmentType)
+    ? Number.isFinite(totalWeightOverride)
+      ? totalWeightOverride
+      : calculatedWeight
+    : 0;
 
   // convert gm to kg and gm
   const convertGramsToKgAndGm = (totalGrams) => {

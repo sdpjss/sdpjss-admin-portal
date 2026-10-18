@@ -37,7 +37,9 @@ import {
   calculateCategoryV2Prasad,
   categoryUsesMinimumAmount,
   formatPrasadWeight,
+  getDonationReceiptAmount,
   getMinimumDonationAmount,
+  getPrasadTokenTotals,
   getSavedPrasadTotals,
 } from "../utils/prasadCalculation";
 
@@ -107,13 +109,12 @@ const toWords = (num) => {
   return words.trim();
 };
 
-const ReceiptTemplate = ({ donationData, userData, courierCharge = 0 }) => {
+const ReceiptTemplate = ({ donationData, userData }) => {
   if (!donationData || !userData) return null;
 
   const donation = {
     ...donationData,
-    amount:
-      Number(donationData.amount || 0) + Number(courierCharge || 0),
+    amount: getDonationReceiptAmount(donationData),
   };
   const user = {
     ...userData,
@@ -155,12 +156,15 @@ const ReceiptModal = ({ data, isGroup, onClose, adminName, totals }) => {
   if (!currentReceiptData) return null;
 
   // Simplified totals logic
-  const currentTotals = getSavedPrasadTotals(
+  const savedTotals = getSavedPrasadTotals(
     currentReceiptData.donationData,
     isGroup ? currentReceiptData : totals
   );
-  const hasPrasadToken =
-    currentTotals.totalWeight > 0 || currentTotals.totalPackets > 0;
+  const currentTotals = getPrasadTokenTotals(
+    currentReceiptData.donationData,
+    savedTotals
+  );
+  const hasPrasadToken = currentTotals.hasPrasadToken;
 
   const handleDownloadClick = (receiptNode, filename) => {
     html2pdf()
