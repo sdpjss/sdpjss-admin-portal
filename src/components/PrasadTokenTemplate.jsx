@@ -122,6 +122,11 @@ const PrasadTokenTemplate = ({
           <div style={{fontSize: "24px", fontWeight: "bold", color: "#d32f2f", marginBottom: "1px",}}>
             SHREE DURGAJI PATWAY JATI SUDHAR SAMITI
           </div>
+          <div
+            style={{ color: "#15803d", fontSize: "12px", fontWeight: 600 }}
+          >
+            (Registered under Indian Trust Act - 1882)
+          </div>
           <div style={{ marginBottom: "1px", fontSize: "14px" }}>
             Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
             823003
