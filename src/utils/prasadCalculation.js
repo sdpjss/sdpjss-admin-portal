@@ -102,10 +102,49 @@ const getSavedPrasadTotals = (donation, fallback = {}) => {
   return fallback;
 };
 
+const getDonationReceiptAmount = (donation) => {
+  const categoryAmount = Array.isArray(donation?.list)
+    ? donation.list.reduce(
+        (sum, item) => sum + (Number(item.amount) || 0),
+        0
+      )
+    : 0;
+  const courierCharge = Number(donation?.courierCharge) || 0;
+
+  return categoryAmount > 0
+    ? categoryAmount + courierCharge
+    : Number(donation?.amount) || 0;
+};
+
+const getPrasadTokenTotals = (donation, fallback = {}) => {
+  const savedTotals = getSavedPrasadTotals(donation, fallback);
+  const fulfillmentMode = donation?.mahaprasadFulfillment?.mode;
+  const fulfillmentType = donation?.mahaprasadFulfillment?.type;
+
+  if (fulfillmentMode !== "collection") {
+    return { totalWeight: 0, totalPackets: 0, hasPrasadToken: false };
+  }
+
+  const totalWeight = ["halwa", "mixed"].includes(fulfillmentType)
+    ? Number(savedTotals.totalWeight) || 0
+    : 0;
+  const totalPackets = ["packet", "mixed"].includes(fulfillmentType)
+    ? Number(savedTotals.totalPackets) || 0
+    : 0;
+
+  return {
+    totalWeight,
+    totalPackets,
+    hasPrasadToken: totalWeight > 0 || totalPackets > 0,
+  };
+};
+
 export {
   calculateCategoryV2Prasad,
   categoryUsesMinimumAmount,
   formatPrasadWeight,
+  getDonationReceiptAmount,
+  getPrasadTokenTotals,
   getMinimumDonationAmount,
   getSavedPrasadTotals,
 };

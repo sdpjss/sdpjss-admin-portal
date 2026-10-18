@@ -16,7 +16,11 @@ import DonationEditModal from "../components/DonationEditModal";
 import PublicDonationReceiptTemplate from "../components/DonationReceiptTemplate";
 import PrasadTokenTemplate from "../components/PrasadTokenTemplate";
 import { printElements } from "../utils/printElements";
-import { getSavedPrasadTotals } from "../utils/prasadCalculation";
+import {
+  getDonationReceiptAmount,
+  getPrasadTokenTotals,
+  getSavedPrasadTotals,
+} from "../utils/prasadCalculation";
 
 const addressLabelStyles = `
 
@@ -212,8 +216,10 @@ const PrintableDonationDocument = forwardRef(
         : undefined;
     const receiptDonation = {
       ...donationData,
-      amount:
-        Number(donationData.amount || 0) + Number(courierCharge || 0),
+      amount: getDonationReceiptAmount({
+        ...donationData,
+        courierCharge,
+      }),
     };
     const receiptData = { donation: receiptDonation, user, childUser };
 
@@ -242,8 +248,17 @@ const ReceiptPreviewModal = ({
   const receiptRef = useRef(null);
   const prasadTokenRef = useRef(null);
 
-  const { totalWeight, totalPackets } = useMemo(() => {
-    if (!donation || !donation.list) return { totalWeight: 0, totalPackets: 0 };
+  const { savedTotals, prasadTokenTotals } = useMemo(() => {
+    if (!donation || !donation.list) {
+      return {
+        savedTotals: { totalWeight: 0, totalPackets: 0 },
+        prasadTokenTotals: {
+          totalWeight: 0,
+          totalPackets: 0,
+          hasPrasadToken: false,
+        },
+      };
+    }
     const fallbackTotals = donation.list.reduce(
       (acc, d) => {
         acc.totalWeight += d.isPacket ? 0 : d.quantity;
@@ -252,11 +267,17 @@ const ReceiptPreviewModal = ({
       },
       { totalWeight: 0, totalPackets: 0 }
     );
-    return getSavedPrasadTotals(donation, fallbackTotals);
+    const saved = getSavedPrasadTotals(donation, fallbackTotals);
+    return {
+      savedTotals: saved,
+      prasadTokenTotals: getPrasadTokenTotals(donation, saved),
+    };
   }, [donation]);
 
+  const totalWeight = savedTotals?.totalWeight || 0;
+  const totalPackets = savedTotals?.totalPackets || 0;
   const finalTotalWeight = totalWeight;
-  const hasPrasadToken = totalWeight > 0 || totalPackets > 0;
+  const hasPrasadToken = Boolean(prasadTokenTotals?.hasPrasadToken);
 
   const { guestData, donationData } = useMemo(() => {
     const defaultAddress = {
@@ -405,8 +426,8 @@ const ReceiptPreviewModal = ({
                   ref={prasadTokenRef}
                   donationData={donationData}
                   guestData={guestData}
-                  totalWeight={totalWeight}
-                  totalPackets={totalPackets}
+                  totalWeight={prasadTokenTotals.totalWeight}
+                  totalPackets={prasadTokenTotals.totalPackets}
                   courierCharge={courierCharge}
                   documentType="prasad-token"
                 />

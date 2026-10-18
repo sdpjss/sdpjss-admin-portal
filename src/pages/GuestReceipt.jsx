@@ -30,7 +30,9 @@ import {
   calculateCategoryV2Prasad,
   categoryUsesMinimumAmount,
   formatPrasadWeight,
+  getDonationReceiptAmount,
   getMinimumDonationAmount,
+  getPrasadTokenTotals,
   getSavedPrasadTotals,
 } from "../utils/prasadCalculation";
 
@@ -72,9 +74,9 @@ const ReceiptModal = ({
         totalPackets: 0,
       }
     : totals;
-  const currentTotals = getSavedPrasadTotals(donationData, fallbackTotals);
-  const hasPrasadToken =
-    currentTotals.totalWeight > 0 || currentTotals.totalPackets > 0;
+  const savedTotals = getSavedPrasadTotals(donationData, fallbackTotals);
+  const currentTotals = getPrasadTokenTotals(donationData, savedTotals);
+  const hasPrasadToken = currentTotals.hasPrasadToken;
 
   const handleDownloadClick = (receiptNode, filename) => {
     const opt = {
@@ -337,13 +339,12 @@ const ReceiptModal = ({
   );
 };
 
-const ReceiptTemplate = ({ donationData, guestData, courierCharge = 0 }) => {
+const ReceiptTemplate = ({ donationData, guestData }) => {
   if (!donationData || !guestData) return null;
 
   const donation = {
     ...donationData,
-    amount:
-      Number(donationData.amount || 0) + Number(courierCharge || 0),
+    amount: getDonationReceiptAmount(donationData),
   };
   const user = {
     ...guestData,
