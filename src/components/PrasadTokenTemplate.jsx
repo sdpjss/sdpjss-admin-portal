@@ -128,7 +128,7 @@ const PrasadTokenTemplate = ({
             (Registered under Indian Trust Act - 1882)
           </div>
           <div style={{ marginBottom: "1px", fontSize: "14px" }}>
-            Shree Durga Sthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
+            Shree Durga Asthan, Patwatoli, Manpur, P.O. Buniyadganj, Gaya Ji -
             823003
           </div>
           <div style={{ fontSize: "12px", color: "#444" }}>
@@ -261,7 +261,7 @@ const PrasadTokenTemplate = ({
               <strong>#</strong> This token is valid for a single use only.
             </li>
             <li style={{fontSize: "12px", margin: "4px 0"}}>
-              <strong>#</strong> Please ensure you collect your items within the specified time to avoid any inconvenience.
+              <strong>#</strong> Please ensure you collect your Mahaprasad within the specified time to avoid any inconvenience.
             </li>
             <li style={{fontSize: "12px", margin: "4px 0"}}>
               <strong>#</strong> Distribution schedules are subject to change; please follow community announcements for updates.
@@ -274,7 +274,7 @@ const PrasadTokenTemplate = ({
             This is an electronically generated document, hence does not require signature.
           </p>
           <p style={{ fontStyle: "italic" }}>
-            Generated on {new Date().toLocaleString("en-IN")}.
+            Generated on {new Date().toLocaleString("en-IN")}. All dates and times are in accordance with {Intl.DateTimeFormat().resolvedOptions().timeZone} time zone.
           </p>
         </div>
       </div>
